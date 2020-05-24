@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <errno.h>
+/* #include <assert.h> */
 /* #include <string.h> */
 #include <string> /* This header contains string class */
 #include <cstdlib>
@@ -75,7 +76,15 @@ namespace andromeda
         u16 errcode;
     };
 
-    struct VersionResponse {
+    struct PACKED IdSizesResponse {
+        u32 fieldIDSize;
+        u32 methodIDSize;
+        u32 objectIDSize;
+        u32 referenceTypeIDSize;
+        u32 frameIDSize;
+    };
+
+    struct JdwpVersion {
         std::string description;
         u32 jdwpMajor;
         u32 jdwpMinor;
@@ -83,30 +92,38 @@ namespace andromeda
         std::string vmName;
     };
 
-    VersionResponse* parseVersionResponse(char* buff, ssize_t size) {
-        VersionResponse* version = (VersionResponse*) malloc(sizeof(VersionResponse));
+    JdwpVersion parseJdwpVersion(char* buff, ssize_t size) {
+        JdwpVersion version = {};
+        char* limit = buff + size;
 
-        u32 descSize = htonl(*(u32*)buff);
+        u32 c = htonl(*(u32*)buff);
         buff += sizeof(u32);
+        assert(buff < limit);
+        assert(c > 0);
 
-        version->description = std::string(buff, descSize);
-        buff += descSize;
+        version.description = std::string(buff, c);
+        buff += c;
+        assert(buff < limit);
 
-        version->jdwpMajor = htonl(*(u32*)buff);
+        version.jdwpMajor = htonl(*(u32*)buff);
         buff += sizeof(u32);
+        assert(buff < limit);
 
-        version->jdwpMinor = htonl(*(u32*)buff);
+        version.jdwpMinor = htonl(*(u32*)buff);
         buff += sizeof(u32);
+        assert(buff < limit);
         
-        u32 vmVersionSize = htonl(*(u32*)buff);
+        c = htonl(*(u32*)buff);
         buff += sizeof(u32);
-        version->vmVersion = std::string(buff, vmVersionSize);
-        buff += vmVersionSize;
+        version.vmVersion = std::string(buff, c);
+        buff += c;
+        assert(buff < limit);
 
-        u32 vmNameSize = htonl(*(u32*)buff);
+        c = htonl(*(u32*)buff);
         buff += sizeof(u32);
-        version->vmName = std::string(buff, vmNameSize);
-        buff += vmNameSize;
+        version.vmName = std::string(buff, c);
+        buff += c;
+        assert(buff <= limit);
 
         return version;
     }
@@ -117,9 +134,9 @@ namespace andromeda
         bool is_connected = false;
 
         int sock = 0;
-        char buffer[1024] = {0};
 
-        explicit jdwp() {}
+        JdwpVersion version;
+        IdSizesResponse idSizes;
 
         bool attach(const std::string &remote) {
             auto p = utils::split(remote, ':');
@@ -190,6 +207,15 @@ namespace andromeda
 
             ssize_t size = 0;
             void* body = readReply(&size);
+            if (body != nullptr && size >= sizeof(IdSizesResponse)) {
+                memcpy((void*)&idSizes, body, sizeof(IdSizesResponse));
+                idSizes.fieldIDSize = htonl(idSizes.fieldIDSize);
+                idSizes.methodIDSize = htonl(idSizes.methodIDSize);
+                idSizes.objectIDSize = htonl(idSizes.objectIDSize);
+                idSizes.referenceTypeIDSize = htonl(idSizes.referenceTypeIDSize);
+                idSizes.frameIDSize = htonl(idSizes.frameIDSize);
+                printf("got ID_SIZES %u %u %u %u %u\n", idSizes.fieldIDSize, idSizes.methodIDSize, idSizes.objectIDSize, idSizes.referenceTypeIDSize, idSizes.frameIDSize);
+            }
             free(body);
         }
 
@@ -201,8 +227,8 @@ namespace andromeda
             ssize_t size = 0;
             void* body = readReply(&size);
             if (body != nullptr && size > 0) {
-                 VersionResponse* version = parseVersionResponse((char*)body, size);
-                 printf("version! %u %u, %s\n", version->jdwpMajor, version->jdwpMinor, version->vmName.c_str());
+                 version = parseJdwpVersion((char*)body, size);
+                 printf("got version %u %u, %s %s %s\n", version.jdwpMajor, version.jdwpMinor, version.vmName.c_str(), version.description.c_str(), version.vmVersion.c_str());
                  free(body);
             }
         }
