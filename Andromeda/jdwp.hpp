@@ -50,6 +50,8 @@ typedef unsigned long long    u64;
 #define CMD_RESUME 9 
 #define CMD_EXIT 10 
 
+#define PACKED __attribute__((__packed__))
+
 namespace andromeda
 {
     // struct.pack(">IIccc", pktlen, self.id, chr(flags), chr(cmdset), chr(cmd))
@@ -57,7 +59,7 @@ namespace andromeda
     // H : unsigned short (2 bytes)
     // c : char           (1 byte)
     // > : big-endian
-    struct __attribute__((__packed__)) RequestHeader {
+    struct PACKED RequestHeader {
         u32 length;
         u32 id;
         u8 flags;
@@ -66,12 +68,48 @@ namespace andromeda
     };
 
     // >IIcH
-    struct __attribute__((__packed__)) ReplyHeader {
+    struct PACKED ReplyHeader {
         u32 length;
         u32 id;
         u8  flags;
         u16 errcode;
     };
+
+    struct VersionResponse {
+        std::string description;
+        u32 jdwpMajor;
+        u32 jdwpMinor;
+        std::string vmVersion;
+        std::string vmName;
+    };
+
+    VersionResponse* parseVersionResponse(char* buff, ssize_t size) {
+        VersionResponse* version = (VersionResponse*) malloc(sizeof(VersionResponse));
+
+        u32 descSize = htonl(*(u32*)buff);
+        buff += sizeof(u32);
+
+        version->description = std::string(buff, descSize);
+        buff += descSize;
+
+        version->jdwpMajor = htonl(*(u32*)buff);
+        buff += sizeof(u32);
+
+        version->jdwpMinor = htonl(*(u32*)buff);
+        buff += sizeof(u32);
+        
+        u32 vmVersionSize = htonl(*(u32*)buff);
+        buff += sizeof(u32);
+        version->vmVersion = std::string(buff, vmVersionSize);
+        buff += vmVersionSize;
+
+        u32 vmNameSize = htonl(*(u32*)buff);
+        buff += sizeof(u32);
+        version->vmName = std::string(buff, vmNameSize);
+        buff += vmNameSize;
+
+        return version;
+    }
 
     class jdwp
     {
@@ -149,29 +187,34 @@ namespace andromeda
             RequestHeader *header = createPacket(CMDSET_VM, CMD_IDSIZES, 0); 
             sendPacket(header);
             free(header);
-            readReply();
+
+            ssize_t size = 0;
+            void* body = readReply(&size);
+            free(body);
         }
 
         void getVersion() {
             RequestHeader *header = createPacket(CMDSET_VM, CMD_VERSION, 0); // version packet            
             sendPacket(header);
             free(header);
-            readReply();
+
+            ssize_t size = 0;
+            void* body = readReply(&size);
+            if (body != nullptr && size > 0) {
+                 VersionResponse* version = parseVersionResponse((char*)body, size);
+                 printf("version! %u %u, %s\n", version->jdwpMajor, version->jdwpMinor, version->vmName.c_str());
+                 free(body);
+            }
         }
 
-        void parseEntries(char *data, u32 len) {
-
-        }
-
-        void readReply() {
+        void* readReply(ssize_t *size) {
             ReplyHeader header;
-            printf("sizeof replay sturct %d\n", sizeof(ReplyHeader));
+            *size = -1;
 
             ssize_t count = read(sock, &header, sizeof(ReplyHeader));
-
             if (count == 0 && errno != 0) {
                 printf("error: %d\n", errno);
-                return;
+                return nullptr;
             }
 
             header.length = ntohl(header.length);
@@ -182,7 +225,7 @@ namespace andromeda
 
             if (header.flags != PACKET_TYPE_REPLY || header.errcode != 0) {
                 printf("error code: %u, flag: %u\n", header.errcode, header.flags);
-                return;
+                return nullptr;
             }
 
             ssize_t payload_size = header.length - sizeof(ReplyHeader);
@@ -190,21 +233,26 @@ namespace andromeda
             if (payload_size > 0) {
                 void* data = malloc(payload_size);
                 read(sock, data, payload_size);
-                printf("read %u bytes\n", payload_size);
-                free(data); // TODO: implement return data
+                /* printf("read %u bytes\n", payload_size); */
+                *size = payload_size;
+                return data;
             }
+
+            // success without data
+            *size = 0;
+            return nullptr;
         }
 
         void sendPacket(RequestHeader* header) {
-            ssize_t count = send(sock, (void*)header, sizeof(RequestHeader), 0);
-            printf("sent header! id: %u, %u bytes. request header [%d,%d]. payload_size: %u\n", header->id, count, header->cmdSet, header->cmd, header->length);
+            send(sock, (void*)header, sizeof(RequestHeader), 0);
+            /* printf("sent header! id: %u, %u bytes. request header [%d,%d]. payload_size: %u\n", header->id, count, header->cmdSet, header->cmd, header->length); */
         }
 
         void sendPacket(RequestHeader* header, void* data) {
             sendPacket(header);
             ssize_t payload_size = header->length - sizeof(RequestHeader);
             ssize_t count = send(sock, data, payload_size, 0);
-            printf("sent body. sent %u bytes. body size: %u\n", count, payload_size);
+            /* printf("sent body. sent %u bytes. body size: %u\n", count, payload_size); */
         }
 
         RequestHeader* createPacket(u8 signal_major, u8 signal_minor, u32 length) {
