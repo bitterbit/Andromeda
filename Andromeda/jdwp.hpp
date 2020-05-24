@@ -12,13 +12,43 @@
 
 
 typedef signed char           s8;
-typedef char                  u8;
+typedef unsigned char         u8;
 typedef short                 s16;
 typedef unsigned short        u16;
 typedef int                   s32;
 typedef unsigned int          u32;
 typedef long long             s64;
 typedef unsigned long long    u64;
+
+#define JDWP_HANDSHAKE "JDWP-Handshake"
+
+#define PACKET_TYPE_COMMAND 0
+#define PACKET_TYPE_REPLY 128
+
+#define CMDSET_VM 1
+#define CMDSET_REFERENCETYPE 2
+#define CMDSET_CLASSTYPE 3
+#define CMDSET_ARRAYTYPE 4
+#define CMDSET_INTERFACETYPE 5
+#define CMDSET_METHOD 6
+#define CMDSET_FIELD 8
+#define CMDSET_OBJECTREFERENCE 9
+#define CMDSET_STRINGREFERENCE 10
+#define CMDSET_THREADREFERENCE 11
+#define CMDSET_THREADGROUPREFERENCE 12
+#define CMDSET_ARRAYREFERENCE 13
+#define CMDSET_CLASSLOADERREFERENCE 14
+#define CMDSET_EVENTREQUEST 15
+#define CMDSET_STACKFRAME 16
+#define CMDSET_CLASSOBJECTREFERENCE 17
+#define CMDSET_EVENT 64
+
+#define CMD_VERSION 1
+#define CMD_CLASSBYSIG 2
+#define CMD_IDSIZES 7
+#define CMD_SUSPEND 8 
+#define CMD_RESUME 9 
+#define CMD_EXIT 10 
 
 namespace andromeda
 {
@@ -89,7 +119,7 @@ namespace andromeda
 
             is_connected = true;
 
-            /* getIdSizes(); */
+            getIdSizes();
             getVersion();
 
             return true;
@@ -99,14 +129,13 @@ namespace andromeda
         u32 packet_id = 1;
 
         bool handshake() {
-            std::string magic = "JDWP-Handshake";
+            std::string magic = JDWP_HANDSHAKE;
 
             send(sock, magic.c_str(), magic.length(), 0);
 
             char recv[magic.length() + 1]; 
             read(sock, &recv, magic.length());
 
-            /* std::string str(recv); */
             std::string response(recv);
             if (response == magic) {
                 printf("did handshake, magic %s\n", response.c_str());
@@ -117,17 +146,21 @@ namespace andromeda
         }
 
         void getIdSizes() {
-            RequestHeader *header = createPacket(1, 7, 0); 
+            RequestHeader *header = createPacket(CMDSET_VM, CMD_IDSIZES, 0); 
             sendPacket(header);
             free(header);
             readReply();
         }
 
         void getVersion() {
-            RequestHeader *header = createPacket(1, 1, 0); // version packet            
+            RequestHeader *header = createPacket(CMDSET_VM, CMD_VERSION, 0); // version packet            
             sendPacket(header);
             free(header);
             readReply();
+        }
+
+        void parseEntries(char *data, u32 len) {
+
         }
 
         void readReply() {
@@ -147,8 +180,9 @@ namespace andromeda
             printf("got reply (%u) id: %u, length: %u, errcode: %u, flags: %u\n", count, header.id, header.length, header.errcode, header.flags);
 
 
-            if (header.flags != 0x80 || header.errcode != 0) {
+            if (header.flags != PACKET_TYPE_REPLY || header.errcode != 0) {
                 printf("error code: %u, flag: %u\n", header.errcode, header.flags);
+                return;
             }
 
             ssize_t payload_size = header.length - sizeof(ReplyHeader);
@@ -162,7 +196,6 @@ namespace andromeda
         }
 
         void sendPacket(RequestHeader* header) {
-            // sizeof should be 11;
             ssize_t count = send(sock, (void*)header, sizeof(RequestHeader), 0);
             printf("sent header! id: %u, %u bytes. request header [%d,%d]. payload_size: %u\n", header->id, count, header->cmdSet, header->cmd, header->length);
         }
