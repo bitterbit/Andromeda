@@ -13,10 +13,10 @@ Compared to other alternatives, it's written in `C/C++` and has a noticeable per
 ### Linux (or Windows Subsystem for Linux)
 #### Requirements
 - clang: `apt install clang`
+- make: `apt install make`
 - libzip: `apt install libz-dev`
 - openssl: `apt install libssl-dev`
 
-0. Make a `/bin` folder inside the `Andromeda` folder
 1. Open `Andromeda` folder from [Visual Studio Code](https://code.visualstudio.com/) and Navigate to `/Andromeda/Andromeda.cpp`
 2. Run C++ build active file (F1 -> Run Task -> clang++ build active file) (`Ctrl + Shift + B`)
 

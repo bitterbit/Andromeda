@@ -1,7 +1,6 @@
-
 CXX:=clang++
 
-CFLAGS:=-g -O0 -Ilibs -Islicer/export  
+CFLAGS:=-g -O0 -Ilibs -Islicer/export -w 
 LDFLAGS:=-lz -lcrypto -std=c++1z 
 FILES=Andromeda/Andromeda.cpp slicer/*.cc libs/AxmlParser/AxmlParser.c libs/pugixml/pugixml.cpp libs/miniz/miniz.c libs/disassambler/dissasembler.cc 
 
@@ -13,6 +12,7 @@ ifeq ($(detected_OS),Darwin)
 endif
 
 ifeq ($(detected_OS),Linux)
+    LDFLAGS += -lstdc++fs
     LDFLAGS += -lstdc++fs
 endif
 

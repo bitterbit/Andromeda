@@ -1,8 +1,10 @@
 #include <cstdio>
 
+
 #include "utils.hpp"
 
 #include "APK.hpp"
+#include "jdwp.hpp"
 
 #include "linenoise/linenoise.hpp"
 
@@ -21,80 +23,84 @@ void help_commands()
 	color::color_printf(color::FG_YELLOW, "Commands:\n");
 
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "entry_points [ep]");
+	color::color_printf(color::FG_LIGHT_CYAN, "entry_points [ep]");
 	printf(" - print list of entry points [LIMITED]\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "entry_points_extended [epe]");
+	color::color_printf(color::FG_LIGHT_CYAN, "entry_points_extended [epe]");
 	printf(" - print all possible entry points\n");
 
+	printf("\n");
+	color::color_printf(color::FG_LIGHT_CYAN, "attach <host:port>");
+	printf(" - permissions requested by the APK file\n");	
+        
 	// permissions
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "permissions [perms]");
+	color::color_printf(color::FG_LIGHT_CYAN, "permissions [perms]");
 	printf(" - permissions requested by the APK file\n");	
 	// activities
-	color::color_printf(color::FG_LIGHT_GREEN, "activities");
+	color::color_printf(color::FG_LIGHT_CYAN, "activities");
 	printf(" - Names of activities contained in the APK file\n");
 	// Services
-	color::color_printf(color::FG_LIGHT_GREEN, "services");
+	color::color_printf(color::FG_LIGHT_CYAN, "services");
 	printf(" - Names of services contained in the APK file\n");
 	// Receivers
-	color::color_printf(color::FG_LIGHT_GREEN, "receivers");
+	color::color_printf(color::FG_LIGHT_CYAN, "receivers");
 	printf(" - Names of handlers declared in the APK file for receiving broadcasts\n");
 
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "classes");
+	color::color_printf(color::FG_LIGHT_CYAN, "classes");
 	printf(" - print all classes from APK file\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "class_info [class] class_path");
+	color::color_printf(color::FG_LIGHT_CYAN, "class_info [class] class_path");
 	printf(" - print list of methods from a class\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "find_class _str_");
+	color::color_printf(color::FG_LIGHT_CYAN, "find_class _str_");
 	printf(" - find a class which contains _str_ string\n");
 
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "methods [funcs]");
+	color::color_printf(color::FG_LIGHT_CYAN, "methods [funcs]");
 	printf(" - print all methods from APK file\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "disassemble [dis] method_path");
+	color::color_printf(color::FG_LIGHT_CYAN, "disassemble [dis] method_path");
 	printf(" - disassemble a method\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "find_method [find_func] _str_");
+	color::color_printf(color::FG_LIGHT_CYAN, "find_method [find_func] _str_");
 	printf(" - find a method which contains _str_ string\n");
 
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "manifest");
+	color::color_printf(color::FG_LIGHT_CYAN, "manifest");
 	printf(" - print content of AndroidManifest.xml file\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "is_debuggable");
+	color::color_printf(color::FG_LIGHT_CYAN, "is_debuggable");
 	printf(" - Checks android::debuggable field of AndroidManifest.xml file\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "certificate");
+	color::color_printf(color::FG_LIGHT_CYAN, "certificate");
 	printf(" - print content of root certificate\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "creation_date");
+	color::color_printf(color::FG_LIGHT_CYAN, "creation_date");
 	printf(" - print creation date of the application based on a certificate\n");
 	
 	// libs
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "libs");
+	color::color_printf(color::FG_LIGHT_CYAN, "libs");
 	printf(" - print list of native library files\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "dump_libs");
+	color::color_printf(color::FG_LIGHT_CYAN, "dump_libs");
 	printf(" - write all lib files to disk\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "dump_lib lib_path");
+	color::color_printf(color::FG_LIGHT_CYAN, "dump_lib lib_path");
 	printf(" - write 'lib_path' file to disk\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "libs_hash [libh]");
+	color::color_printf(color::FG_LIGHT_CYAN, "libs_hash [libh]");
 	printf(" - SHA-1 hashes of lib files\n");
 	
 	// strings
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "strings [strs]");
+	color::color_printf(color::FG_LIGHT_CYAN, "strings [strs]");
 	printf(" - print the strings of APK (thanks to Strings Constant Pool)\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "string [str] search_string");
+	color::color_printf(color::FG_LIGHT_CYAN, "string [str] search_string");
 	printf(" - find \"search_string\" in the strings of APK\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "interesting_strings [???]"); // TODO(lasha): short form
+	color::color_printf(color::FG_LIGHT_CYAN, "interesting_strings [???]"); // TODO(lasha): short form
 	printf(" - Interesting/Suspicious strings from the APK file\n");
 
 	// misc
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "language [lang]");
+	color::color_printf(color::FG_LIGHT_CYAN, "language [lang]");
 	printf(" - print a language used to write the application\n");
 
 	printf("\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "cls [clr]");
+	color::color_printf(color::FG_LIGHT_CYAN, "cls [clr]");
 	printf(": Clear screen\n");
-	color::color_printf(color::FG_LIGHT_GREEN, "\nexit/quit\n");
+	color::color_printf(color::FG_LIGHT_CYAN, "\nexit/quit\n");
 	printf("\n");
 }
 
@@ -223,6 +229,8 @@ int main(const int argc, char* argv[])
 		return -1;
 	}
 
+        andromeda::jdwp remote;
+
 	while (true)
 	{
 		std::string line;
@@ -237,10 +245,17 @@ int main(const int argc, char* argv[])
 		}
 		linenoise::AddHistory(line.c_str());
 
+                printf("DEBUG: line %s\n", line.c_str());
+
 		if (line == "?" || line == "help")
 		{
 			help_commands();
 		}
+                else if (utils::starts_with(line, "attach ")) 
+                {
+			auto [_, addr] = utils::split(line, ' ');
+                        remote.attach(addr);
+                }
 		else if (line == "activities")
 		{
 			apk.dump_activities();
@@ -412,6 +427,6 @@ int main(const int argc, char* argv[])
 
 	/* ----------- EOF ------------ */
 
-	color_printf(color::FG_LIGHT_GREEN, "----------- EOF -----------\n");
+	color_printf(color::FG_LIGHT_CYAN, "----------- EOF -----------\n");
 	return 0;
 }
