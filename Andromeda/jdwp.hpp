@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <errno.h>
 /* #include <string.h> */
 #include <string> /* This header contains string class */
 #include <cstdlib>
@@ -34,6 +35,7 @@ namespace andromeda
         u8 cmd;
     };
 
+    // >IIcH
     struct __attribute__((__packed__)) ReplyHeader {
         u32 length;
         u32 id;
@@ -86,12 +88,16 @@ namespace andromeda
             }
 
             is_connected = true;
+
+            /* getIdSizes(); */
             getVersion();
 
             return true;
         }
 
     private:
+        u32 packet_id = 1;
+
         bool handshake() {
             std::string magic = "JDWP-Handshake";
 
@@ -110,6 +116,13 @@ namespace andromeda
             return false;
         }
 
+        void getIdSizes() {
+            RequestHeader *header = createPacket(1, 7, 0); 
+            sendPacket(header);
+            free(header);
+            readReply();
+        }
+
         void getVersion() {
             RequestHeader *header = createPacket(1, 1, 0); // version packet            
             sendPacket(header);
@@ -119,31 +132,56 @@ namespace andromeda
 
         void readReply() {
             ReplyHeader header;
-            read(sock, &header, sizeof(ReplyHeader));
-            printf("Got reply id: %u, length: %u, errcode: %u\n", header.id, header.length, header.errcode);
+            printf("sizeof replay sturct %d\n", sizeof(ReplyHeader));
 
-            return; // TODO
-            void* data = malloc(header.length);
-            read(sock, data, header.length);
-            printf("Read data");
-            free(data); // TODO: implement
+            ssize_t count = read(sock, &header, sizeof(ReplyHeader));
+
+            if (count == 0 && errno != 0) {
+                printf("error: %d\n", errno);
+                return;
+            }
+
+            header.length = ntohl(header.length);
+            header.id = ntohl(header.id);
+            header.errcode = ntohs(header.errcode);
+            printf("got reply (%u) id: %u, length: %u, errcode: %u, flags: %u\n", count, header.id, header.length, header.errcode, header.flags);
+
+
+            if (header.flags != 0x80 || header.errcode != 0) {
+                printf("error code: %u, flag: %u\n", header.errcode, header.flags);
+            }
+
+            ssize_t payload_size = header.length - sizeof(ReplyHeader);
+
+            if (payload_size > 0) {
+                void* data = malloc(payload_size);
+                read(sock, data, payload_size);
+                printf("read %u bytes\n", payload_size);
+                free(data); // TODO: implement return data
+            }
         }
 
         void sendPacket(RequestHeader* header) {
             // sizeof should be 11;
-            send(sock, (void *) header, sizeof(RequestHeader), 0);
+            ssize_t count = send(sock, (void*)header, sizeof(RequestHeader), 0);
+            printf("sent header! id: %u, %u bytes. request header [%d,%d]. payload_size: %u\n", header->id, count, header->cmdSet, header->cmd, header->length);
         }
 
         void sendPacket(RequestHeader* header, void* data) {
             sendPacket(header);
-            send(sock, data, header->length, 0);
+            ssize_t payload_size = header->length - sizeof(RequestHeader);
+            ssize_t count = send(sock, data, payload_size, 0);
+            printf("sent body. sent %u bytes. body size: %u\n", count, payload_size);
         }
 
         RequestHeader* createPacket(u8 signal_major, u8 signal_minor, u32 length) {
            RequestHeader *packet = (RequestHeader*) malloc(sizeof(RequestHeader));
-           packet->length = length;
+           packet->length = htonl(length + sizeof(RequestHeader));
+           packet->id = htonl(packet_id);
+           packet->flags = 0x00;
            packet->cmdSet = signal_major;
            packet->cmd = signal_minor;
+           packet_id += 2;
            return packet;
         }
     };
