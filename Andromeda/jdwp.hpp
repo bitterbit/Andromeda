@@ -138,7 +138,7 @@ namespace andromeda
     template <typename T>
     struct PACKED JdwpClassRef {
         u8 refTypeTag;
-        T typeId;
+        T typeID;
         s32 status;
     };
 
@@ -149,6 +149,21 @@ namespace andromeda
         std::string name;
         std::string signature;
         u32 modBits; // The modifier bit flags (also known as access flags)
+    };
+
+    template <typename RefType, typename MethodType>
+    struct PACKED BreakpointRequestEvent {
+        /* header */
+        u8  eventType;
+        u8  suspendPolicy;
+        u32 modifiers; // can be only 1, if more we need a different structure
+        u8  modKind;
+
+        /* location struct */
+        u8 typeTag; 
+        RefType classID;
+        MethodType methodID;
+        u64 location;
     };
 
     JdwpVersion ParseJdwpVersion(char* buff, ssize_t size) {
@@ -248,9 +263,35 @@ namespace andromeda
 
             // TODO: handle different sizes according to IdSizes
             auto classes = GetClassByName<u64>(name);
-            auto methods = GetMethodsForType<u64, u32>(classes[0].typeId);
+            auto methods = GetMethodsForType<u64, u32>(classes[0].typeID);
+
             for(auto const &value: methods) {
-                std::cout << "method: " << value.name << std::endl;  
+                std::cout << "method: " << value.name << std::endl;
+            }
+
+            auto bp_request = BreakpointRequestEvent<u64, u32>();
+            bp_request.eventType = 2;                   // BREAKPOINT
+            bp_request.suspendPolicy = 2;               // SUSPEND_ALL 
+            bp_request.modifiers = bswap_32(1);
+            bp_request.modKind = 7;                     // MOD_KIND_LOCATIONONLY
+            bp_request.typeTag = 1;                     // CLASS
+            bp_request.classID = bswap<u64>(classes[0].typeID);
+            bp_request.methodID = bswap<u32>(methods[3].methodID);
+            bp_request.location = 0;
+
+            printf("size of bp_request %u\n", sizeof(bp_request));
+            auto header = CreatePacket(15, 1, sizeof(bp_request)); // EVENT_REQUEST, CMD_SET
+            SendPacket(&header, (void*)&bp_request);
+
+            ssize_t size = 0;
+            void* body = ReadReply(&size);
+            if (size > 0 && body != nullptr) {
+                assert(size == sizeof(u32));
+                u32 id = bswap_32(*(u32*)body);
+                std::cout << "got request id: " << id << std::endl;
+                free(body);
+
+                ResumeVM(); // resume vm and wait for event
             }
         }
 
@@ -331,9 +372,9 @@ namespace andromeda
                 for (s32 i=0; i< nb_classes; i++) {
                     auto classRef = JdwpClassRef<T>();
                     memcpy(&classRef, buff, sizeof(classRef));
-                    classRef.typeId = bswap_64(classRef.typeId);
+                    classRef.typeID = bswap_64(classRef.typeID);
                     classRef.status = htonl(classRef.status);
-                    printf("class %d typeId: %lu status: %d\n", i, classRef.typeId, classRef.status);
+                    printf("class %d typeId: %lu status: %d\n", i, classRef.typeID, classRef.status);
 
                     classes.push_back(classRef);
                     buff += sizeof(JdwpClassRef<T>);
@@ -398,6 +439,21 @@ namespace andromeda
             }
 
             return methods;
+        }
+
+        void ResumeVM() {
+            auto packet = CreatePacket(CMDSET_VM, CMD_RESUME); 
+            SendPacket(&packet);
+            WaitForReply();
+        }
+
+        void WaitForReply() {
+            ssize_t size = 0;
+            void* buff = ReadReply(&size);
+            if (size > 0) {
+                free(buff);
+            }
+            return;
         }
 
         void* ReadReply(ssize_t *size) {
