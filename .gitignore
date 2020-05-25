@@ -32,3 +32,6 @@
 *.app
 
 bin/*
+
+# vim swp files
+.*.swp
