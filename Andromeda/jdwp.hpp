@@ -10,6 +10,26 @@
 #include <string> /* This header contains string class */
 #include <cstdlib>
 
+// https://gist.github.com/atr000/249599
+// a) As Mac OS X does not have byteswap.h
+// needed this for a c util I had used over the years on linux. 
+// did not find a solution to stopgap via macports, sadly, but this did the trick
+#if HAVE_BYTESWAP_H
+#include <byteswap.h>
+#else
+#define bswap_16(value) \
+    ((((value) & 0xff) << 8) | ((value) >> 8))
+
+#define bswap_32(value) \
+    (((uint32_t)bswap_16((uint16_t)((value) & 0xffff)) << 16) | \
+     (uint32_t)bswap_16((uint16_t)((value) >> 16)))
+
+#define bswap_64(value) \
+    (((uint64_t)bswap_32((uint32_t)((value) & 0xffffffff)) \
+      << 32) | \
+      (uint64_t)bswap_32((uint32_t)((value) >> 32)))
+#endif
+
 
 
 typedef signed char           s8;
@@ -46,6 +66,8 @@ typedef unsigned long long    u64;
 
 #define CMD_VERSION 1
 #define CMD_CLASSBYSIG 2
+#define CMD_ALLCLASSES 3
+#define CMD_ALLTHREADS 4 
 #define CMD_IDSIZES 7
 #define CMD_SUSPEND 8 
 #define CMD_RESUME 9 
@@ -90,6 +112,23 @@ namespace andromeda
         u32 jdwpMinor;
         std::string vmVersion;
         std::string vmName;
+    };
+
+    // depends on referenceTypeIDSize;
+    template <typename T>
+    struct PACKED JdwpClassRef {
+        u8 refTypeTag;
+        T typeId;
+        s32 status;
+    };
+
+    // depends on methodIDSize;
+    template<typename T>
+    struct JdwpMethodRef {
+        T methodId;
+        std::string name;
+        std::string signature;
+        s32 modBits; // The modifier bit flags (also known as access flags)
     };
 
     JdwpVersion ParseJdwpVersion(char* buff, ssize_t size) {
@@ -171,7 +210,24 @@ namespace andromeda
             FetchIDSizes();
             FetchVersion();
 
+            SetBreakpoint();
+
             return true;
+        }
+
+        void SetBreakpoint() {
+            std::string name = "Lcom/example/myapplication/MyActivity;";
+            if (!is_connected_) {
+                return;
+            }
+
+            if (name.rfind("L") != 0 || name.back() != ';')  {
+                printf("bad class name %s\n", name.c_str());
+                return;
+            }
+
+            // TODO: handle different sizes according to IdSizes
+            auto classes = GetClassByName<u64>(name);
         }
 
     private:
@@ -199,7 +255,7 @@ namespace andromeda
         }
 
         void FetchIDSizes() {
-            RequestHeader header = CreatePacket(CMDSET_VM, CMD_IDSIZES, 0); 
+            RequestHeader header = CreatePacket(CMDSET_VM, CMD_IDSIZES);
             SendPacket(&header);
 
             ssize_t size = 0;
@@ -217,7 +273,7 @@ namespace andromeda
         }
 
         void FetchVersion() {
-            RequestHeader header = CreatePacket(CMDSET_VM, CMD_VERSION, 0); // version packet            
+            RequestHeader header = CreatePacket(CMDSET_VM, CMD_VERSION); 
             SendPacket(&header);
 
             ssize_t size = 0;
@@ -228,6 +284,44 @@ namespace andromeda
                  free(body);
             }
         }
+
+        template <typename T>
+        std::vector<JdwpClassRef<T>> GetClassByName(std::string name) {
+            std::vector<JdwpClassRef<T>> classes;
+
+            RequestHeader header = CreatePacket(CMDSET_VM, CMD_CLASSBYSIG); 
+            SendPacketString(&header, name);
+            printf("sent classbysig packet\n");
+
+            ssize_t size = 0;
+            void* body = ReadReply(&size);
+            void* end = ((char*)body + size);
+            printf("got classbysig reply, size: %u\n", size);
+
+            if (size > 0 && body != nullptr) {
+                char* buff = (char*)body;
+                s32 nb_classes = htonl(*(s32*)buff);
+                buff += sizeof(s32); 
+                printf("found %d classes\n", nb_classes);
+
+                for (s32 i=0; i< nb_classes; i++) {
+                    auto classRef = JdwpClassRef<T>();
+                    memcpy(&classRef, buff, sizeof(classRef));
+                    classRef.typeId = bswap_64(classRef.typeId);
+                    classRef.status = htonl(classRef.status);
+                    printf("class %d typeId: %lu status: %d\n", i, classRef.typeId, classRef.status);
+
+                    classes.push_back(classRef);
+                    buff += sizeof(JdwpClassRef<T>);
+                    assert(buff <= end);
+                }
+
+                free(body);
+            }
+
+            return classes;
+        }
+
 
         void* ReadReply(ssize_t *size) {
             ReplyHeader header;
@@ -267,25 +361,43 @@ namespace andromeda
 
         void SendPacket(RequestHeader* header) {
             send(sock_, (void*)header, sizeof(RequestHeader), 0);
-            /* printf("sent header! id: %u, %u bytes. request header [%d,%d]. payload_size: %u\n", header->id, count, header->cmdSet, header->cmd, header->length); */
         }
 
         void SendPacket(RequestHeader* header, void* data) {
             SendPacket(header);
             ssize_t payload_size = header->length - sizeof(RequestHeader);
             ssize_t count = send(sock_, data, payload_size, 0);
-            /* printf("sent body. sent %u bytes. body size: %u\n", count, payload_size); */
+        }
+
+        void SendPacketString(RequestHeader* header, std::string& body) {
+            // header
+            header->length = bswap_32(sizeof(RequestHeader) + sizeof(u32) + body.length());
+            printf("sending total length of %u\n", header->length);
+            SendPacket(header);
+
+            // body
+            ssize_t bytes = 0;
+            u32 body_size = body.length();
+            u32 swaped_body_size = bswap_32(body_size);
+            bytes += send(sock_, &swaped_body_size, sizeof(u32), 0);
+            bytes += send(sock_, body.c_str(), body_size, 0);
+            printf("sent body of %u bytes\n", bytes);
+        }
+
+        RequestHeader CreatePacket(u8 signal_major, u8 signal_minor) {
+            return CreatePacket(signal_major, signal_minor, 0);
         }
 
         RequestHeader CreatePacket(u8 signal_major, u8 signal_minor, u32 length) {
-           RequestHeader packet = RequestHeader{};
-           packet.length = htonl(length + sizeof(RequestHeader));
-           packet.id = htonl(packet_id);
-           packet.flags = 0x00;
-           packet.cmdSet = signal_major;
-           packet.cmd = signal_minor;
-           packet_id += 2;
-           return packet;
+            printf("CreatePacket major: %u minor: %u length: %u", signal_major, signal_minor, length);
+            RequestHeader packet = RequestHeader{};
+            packet.length = htonl(length + sizeof(RequestHeader));
+            packet.id = htonl(packet_id);
+            packet.flags = 0x00;
+            packet.cmdSet = signal_major;
+            packet.cmd = signal_minor;
+            packet_id += 2;
+            return packet;
         }
     };
 
