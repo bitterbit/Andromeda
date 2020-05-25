@@ -254,7 +254,7 @@ int main(const int argc, char* argv[])
                 else if (utils::starts_with(line, "attach ")) 
                 {
 			auto [_, addr] = utils::split(line, ' ');
-                        remote.attach(addr);
+                        remote.Attach(addr);
                 }
 		else if (line == "activities")
 		{

@@ -92,7 +92,7 @@ namespace andromeda
         std::string vmName;
     };
 
-    JdwpVersion parseJdwpVersion(char* buff, ssize_t size) {
+    JdwpVersion ParseJdwpVersion(char* buff, ssize_t size) {
         JdwpVersion version = {};
         char* limit = buff + size;
 
@@ -131,14 +131,8 @@ namespace andromeda
     class jdwp
     {
     public:
-        bool is_connected = false;
 
-        int sock = 0;
-
-        JdwpVersion version;
-        IdSizesResponse idSizes;
-
-        bool attach(const std::string &remote) {
+        bool Attach(const std::string &remote) {
             auto p = utils::split(remote, ':');
             std::string host = p.first;
             std::string port = p.second;
@@ -146,9 +140,9 @@ namespace andromeda
 
             RequestHeader header;
             
-            sock = socket(AF_INET, SOCK_STREAM, 0);
-            if (sock < 0) {
-                printf("error creating socket\n");
+            sock_ = socket(AF_INET, SOCK_STREAM, 0);
+            if (sock_ < 0) {
+                printf("error creating sock_et\n");
                 return false;
             }
 
@@ -160,84 +154,86 @@ namespace andromeda
                 return false;
             }
 
-            if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+            if (connect(sock_, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
                 printf("connection failed \n"); 
                 return false;
             }
 
             printf("net connected.\n");
 
-            if (!handshake()) {
-                printf("error in jdwp handshake\n");
+            if (!Handshake()) {
+                printf("error in jdwp Handshake\n");
                 return false;
             }
 
-            is_connected = true;
+            is_connected_ = true;
 
-            getIdSizes();
-            getVersion();
+            FetchIDSizes();
+            FetchVersion();
 
             return true;
         }
 
     private:
         u32 packet_id = 1;
+        JdwpVersion version_;
+        IdSizesResponse idSizes_;
+        bool is_connected_ = false;
+        int sock_ = 0;
 
-        bool handshake() {
+        bool Handshake() {
             std::string magic = JDWP_HANDSHAKE;
 
-            send(sock, magic.c_str(), magic.length(), 0);
+            send(sock_, magic.c_str(), magic.length(), 0);
 
             char recv[magic.length() + 1]; 
-            read(sock, &recv, magic.length());
+            ssize_t count = read(sock_, &recv, magic.length());
 
-            std::string response(recv);
+            std::string response(recv, count);
             if (response == magic) {
-                printf("did handshake, magic %s\n", response.c_str());
+                printf("did Handshake, magic %s\n", response.c_str());
                 return true;
             }
 
             return false;
         }
 
-        void getIdSizes() {
-            RequestHeader *header = createPacket(CMDSET_VM, CMD_IDSIZES, 0); 
-            sendPacket(header);
-            free(header);
+        void FetchIDSizes() {
+            RequestHeader header = CreatePacket(CMDSET_VM, CMD_IDSIZES, 0); 
+            SendPacket(&header);
 
             ssize_t size = 0;
-            void* body = readReply(&size);
+            void* body = ReadReply(&size);
             if (body != nullptr && size >= sizeof(IdSizesResponse)) {
-                memcpy((void*)&idSizes, body, sizeof(IdSizesResponse));
-                idSizes.fieldIDSize = htonl(idSizes.fieldIDSize);
-                idSizes.methodIDSize = htonl(idSizes.methodIDSize);
-                idSizes.objectIDSize = htonl(idSizes.objectIDSize);
-                idSizes.referenceTypeIDSize = htonl(idSizes.referenceTypeIDSize);
-                idSizes.frameIDSize = htonl(idSizes.frameIDSize);
-                printf("got ID_SIZES %u %u %u %u %u\n", idSizes.fieldIDSize, idSizes.methodIDSize, idSizes.objectIDSize, idSizes.referenceTypeIDSize, idSizes.frameIDSize);
+                memcpy((void*)&idSizes_, body, sizeof(IdSizesResponse));
+                idSizes_.fieldIDSize = htonl(idSizes_.fieldIDSize);
+                idSizes_.methodIDSize = htonl(idSizes_.methodIDSize);
+                idSizes_.objectIDSize = htonl(idSizes_.objectIDSize);
+                idSizes_.referenceTypeIDSize = htonl(idSizes_.referenceTypeIDSize);
+                idSizes_.frameIDSize = htonl(idSizes_.frameIDSize);
+                printf("got ID_SIZES %u %u %u %u %u\n", idSizes_.fieldIDSize, idSizes_.methodIDSize, idSizes_.objectIDSize, idSizes_.referenceTypeIDSize, idSizes_.frameIDSize);
+                free(body);
             }
-            free(body);
         }
 
-        void getVersion() {
-            RequestHeader *header = createPacket(CMDSET_VM, CMD_VERSION, 0); // version packet            
-            sendPacket(header);
-            free(header);
+        void FetchVersion() {
+            RequestHeader header = CreatePacket(CMDSET_VM, CMD_VERSION, 0); // version packet            
+            SendPacket(&header);
 
             ssize_t size = 0;
-            void* body = readReply(&size);
+            void* body = ReadReply(&size);
             if (body != nullptr && size > 0) {
-                 version = parseJdwpVersion((char*)body, size);
-                 printf("got version %u %u, %s %s %s\n", version.jdwpMajor, version.jdwpMinor, version.vmName.c_str(), version.description.c_str(), version.vmVersion.c_str());
+                 version_ = ParseJdwpVersion((char*)body, size);
+                 printf("got version %u %u, %s %s %s\n", version_.jdwpMajor, version_.jdwpMinor, version_.vmName.c_str(), version_.description.c_str(), version_.vmVersion.c_str());
                  free(body);
             }
         }
 
-        void* readReply(ssize_t *size) {
+        void* ReadReply(ssize_t *size) {
             ReplyHeader header;
             *size = -1;
 
-            ssize_t count = read(sock, &header, sizeof(ReplyHeader));
+            ssize_t count = read(sock_, &header, sizeof(ReplyHeader));
             if (count == 0 && errno != 0) {
                 printf("error: %d\n", errno);
                 return nullptr;
@@ -258,7 +254,7 @@ namespace andromeda
 
             if (payload_size > 0) {
                 void* data = malloc(payload_size);
-                read(sock, data, payload_size);
+                read(sock_, data, payload_size);
                 /* printf("read %u bytes\n", payload_size); */
                 *size = payload_size;
                 return data;
@@ -269,25 +265,25 @@ namespace andromeda
             return nullptr;
         }
 
-        void sendPacket(RequestHeader* header) {
-            send(sock, (void*)header, sizeof(RequestHeader), 0);
+        void SendPacket(RequestHeader* header) {
+            send(sock_, (void*)header, sizeof(RequestHeader), 0);
             /* printf("sent header! id: %u, %u bytes. request header [%d,%d]. payload_size: %u\n", header->id, count, header->cmdSet, header->cmd, header->length); */
         }
 
-        void sendPacket(RequestHeader* header, void* data) {
-            sendPacket(header);
+        void SendPacket(RequestHeader* header, void* data) {
+            SendPacket(header);
             ssize_t payload_size = header->length - sizeof(RequestHeader);
-            ssize_t count = send(sock, data, payload_size, 0);
+            ssize_t count = send(sock_, data, payload_size, 0);
             /* printf("sent body. sent %u bytes. body size: %u\n", count, payload_size); */
         }
 
-        RequestHeader* createPacket(u8 signal_major, u8 signal_minor, u32 length) {
-           RequestHeader *packet = (RequestHeader*) malloc(sizeof(RequestHeader));
-           packet->length = htonl(length + sizeof(RequestHeader));
-           packet->id = htonl(packet_id);
-           packet->flags = 0x00;
-           packet->cmdSet = signal_major;
-           packet->cmd = signal_minor;
+        RequestHeader CreatePacket(u8 signal_major, u8 signal_minor, u32 length) {
+           RequestHeader packet = RequestHeader{};
+           packet.length = htonl(length + sizeof(RequestHeader));
+           packet.id = htonl(packet_id);
+           packet.flags = 0x00;
+           packet.cmdSet = signal_major;
+           packet.cmd = signal_minor;
            packet_id += 2;
            return packet;
         }
