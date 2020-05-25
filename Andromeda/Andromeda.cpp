@@ -1,5 +1,5 @@
 #include <cstdio>
-
+#include <signal.h>
 
 #include "utils.hpp"
 
@@ -7,6 +7,27 @@
 #include "jdwp.hpp"
 
 #include "linenoise/linenoise.hpp"
+
+std::weak_ptr<andromeda::jdwp> g_jdwp_remote;
+
+void interrupt_handler(int signal) {
+    printf("on signal %d\n", signal);
+    if (auto remote = g_jdwp_remote.lock()) {
+        remote->SuspendVM();
+        printf("suspended VM \n");
+    }
+}
+
+void register_interrupt_handler() {
+    struct sigaction sig_int_handler;
+
+    sig_int_handler.sa_handler = interrupt_handler;
+    sigemptyset(&sig_int_handler.sa_mask);
+    sig_int_handler.sa_flags = 0;
+
+    sigaction(SIGINT, &sig_int_handler, NULL);
+}
+
 
 void usage()
 {
@@ -229,32 +250,48 @@ int main(const int argc, char* argv[])
 		return -1;
 	}
 
-        andromeda::jdwp remote;
+        auto remote = std::make_shared<andromeda::jdwp>();
+        g_jdwp_remote = remote;
+        register_interrupt_handler();
 
 	while (true)
 	{
+                bool ctrlc = false;
 		std::string line;
 		const auto quit = linenoise::Readline("Andromeda> ", line);
 		if (quit || line == "quit" || line == "exit")
 		{
-			//if (fs::exists(apk.))
-			//{
-			//    fs::remove_all(unpacked_dir);
-			//}
+                    // ctrl-c
+                    if (errno == EAGAIN) {
+                        ctrlc = true;
+                        errno = 0;
+                    } else {
 			break;
-		}
+                    }
+                }
 		linenoise::AddHistory(line.c_str());
 
                 printf("DEBUG: line %s\n", line.c_str());
 
-		if (line == "?" || line == "help")
+                if (ctrlc) 
+                {
+                        printf("alreay suspended, try `quit`");
+                }
+                else if (line == "?" || line == "help")
 		{
 			help_commands();
 		}
                 else if (utils::starts_with(line, "attach ")) 
                 {
 			auto [_, addr] = utils::split(line, ' ');
-                        remote.Attach(addr);
+                        remote->Attach(addr);
+                }
+                else if (line == "cont") 
+                {
+                        remote->ResumeVM();
+                        remote->WaitForBreakpoint();
+                        printf("Breakpoint!\n");
+                        // if we get here we have a breakpoint
                 }
 		else if (line == "activities")
 		{
@@ -426,6 +463,10 @@ int main(const int argc, char* argv[])
 	}
 
 	/* ----------- EOF ------------ */
+        //if (fs::exists(apk.))
+        //{
+        //    fs::remove_all(unpacked_dir);
+        //}
 
 	color_printf(color::FG_LIGHT_CYAN, "----------- EOF -----------\n");
 	return 0;

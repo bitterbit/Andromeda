@@ -207,6 +207,10 @@ namespace andromeda
     public:
 
         bool Attach(const std::string &remote) {
+            if(is_connected_) {
+                return false;
+            }
+
             auto p = utils::split(remote, ':');
             std::string host = p.first;
             std::string port = p.second;
@@ -290,9 +294,30 @@ namespace andromeda
                 u32 id = bswap_32(*(u32*)body);
                 std::cout << "got request id: " << id << std::endl;
                 free(body);
-
-                ResumeVM(); // resume vm and wait for event
             }
+        }
+
+        void SuspendVM() {
+            if(!is_connected_) {
+                return;
+            }
+            auto packet = CreatePacket(CMDSET_VM, CMD_SUSPEND); 
+            SendPacket(&packet);
+            WaitForReply();
+        }
+
+        void ResumeVM() {
+            if(!is_connected_) {
+                return;
+            }
+            auto packet = CreatePacket(CMDSET_VM, CMD_RESUME); 
+            SendPacket(&packet);
+            WaitForReply();
+        }
+
+        void WaitForBreakpoint() {
+            // now wait for a breakpoint event
+            WaitForReply();
         }
 
     private:
@@ -441,11 +466,6 @@ namespace andromeda
             return methods;
         }
 
-        void ResumeVM() {
-            auto packet = CreatePacket(CMDSET_VM, CMD_RESUME); 
-            SendPacket(&packet);
-            WaitForReply();
-        }
 
         void WaitForReply() {
             ssize_t size = 0;
