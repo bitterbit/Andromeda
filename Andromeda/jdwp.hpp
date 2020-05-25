@@ -9,6 +9,7 @@
 /* #include <string.h> */
 #include <string> /* This header contains string class */
 #include <cstdlib>
+#include <iostream>
 
 // https://gist.github.com/atr000/249599
 // a) As Mac OS X does not have byteswap.h
@@ -30,8 +31,6 @@
       (uint64_t)bswap_32((uint32_t)((value) >> 32)))
 #endif
 
-
-
 typedef signed char           s8;
 typedef unsigned char         u8;
 typedef short                 s16;
@@ -40,6 +39,23 @@ typedef int                   s32;
 typedef unsigned int          u32;
 typedef long long             s64;
 typedef unsigned long long    u64;
+
+template<typename T> T bswap(T value);
+
+template<>
+u16 bswap<u16>(u16 value) {
+    return bswap_16(value);
+}
+
+template<>
+u32 bswap<u32>(u32 value) {
+    return bswap_32(value);
+}
+
+template<>
+u64 bswap<u64>(u64 value) {
+    return bswap_64(value);
+}
 
 #define JDWP_HANDSHAKE "JDWP-Handshake"
 
@@ -64,6 +80,7 @@ typedef unsigned long long    u64;
 #define CMDSET_CLASSOBJECTREFERENCE 17
 #define CMDSET_EVENT 64
 
+// CMDSET_VM
 #define CMD_VERSION 1
 #define CMD_CLASSBYSIG 2
 #define CMD_ALLCLASSES 3
@@ -72,6 +89,9 @@ typedef unsigned long long    u64;
 #define CMD_SUSPEND 8 
 #define CMD_RESUME 9 
 #define CMD_EXIT 10 
+
+// CMDSET_REFERENCETYPE
+#define CMD_METHODS 5
 
 #define PACKED __attribute__((__packed__))
 
@@ -125,10 +145,10 @@ namespace andromeda
     // depends on methodIDSize;
     template<typename T>
     struct JdwpMethodRef {
-        T methodId;
+        T methodID;
         std::string name;
         std::string signature;
-        s32 modBits; // The modifier bit flags (also known as access flags)
+        u32 modBits; // The modifier bit flags (also known as access flags)
     };
 
     JdwpVersion ParseJdwpVersion(char* buff, ssize_t size) {
@@ -228,6 +248,10 @@ namespace andromeda
 
             // TODO: handle different sizes according to IdSizes
             auto classes = GetClassByName<u64>(name);
+            auto methods = GetMethodsForType<u64, u32>(classes[0].typeId);
+            for(auto const &value: methods) {
+                std::cout << "method: " << value.name << std::endl;  
+            }
         }
 
     private:
@@ -322,6 +346,59 @@ namespace andromeda
             return classes;
         }
 
+        template <typename RefType, typename MethodType>
+        std::vector<JdwpMethodRef<MethodType>> GetMethodsForType(RefType refType) {
+            std::vector<JdwpMethodRef<MethodType>> methods;
+
+            RequestHeader header = CreatePacket(CMDSET_REFERENCETYPE, CMD_METHODS, sizeof(RefType));
+            RefType ref = bswap<RefType>(refType);
+
+            SendPacket(&header, (void*)&ref);
+
+            printf("sent packet\n");
+
+            ssize_t size = 0;
+            void* body = ReadReply(&size);
+            void* end = ((char*)body + size);
+            printf("got methods for class. reply, size: %u\n", size);
+
+            if (size > 0 && body != nullptr) {
+                char* buff = (char*)body;
+                s32 nb_classes = htonl(*(s32*)buff);
+                buff += sizeof(s32); 
+                printf("found %d methods\n", nb_classes);
+                for(s32 i=0; i<nb_classes; i++){
+                    auto methodRef = JdwpMethodRef<MethodType>();
+
+                    memcpy((void*)&methodRef.methodID, buff, sizeof(MethodType));
+                    methodRef.methodID = bswap<MethodType>(methodRef.methodID);
+                    buff += sizeof(MethodType);
+
+                    u32 n;
+                    memcpy((void*)&n, buff, sizeof(u32));
+                    n = bswap_32(n);
+                    buff += sizeof(u32);
+                    methodRef.name = std::string(buff, n);
+                    buff += n;
+
+                    memcpy((void*)&n, buff, sizeof(u32));
+                    n = bswap_32(n);
+                    buff += sizeof(u32);
+                    methodRef.signature = std::string(buff, n);
+                    buff += n;
+
+                    memcpy((void*)&methodRef.modBits, buff, sizeof(u32));
+                    methodRef.modBits = bswap_32(methodRef.modBits);
+                    buff += sizeof(u32);
+
+                    assert(buff <= end);
+                    methods.push_back(methodRef);
+                }
+                free(body);
+            }
+
+            return methods;
+        }
 
         void* ReadReply(ssize_t *size) {
             ReplyHeader header;
@@ -332,6 +409,7 @@ namespace andromeda
                 printf("error: %d\n", errno);
                 return nullptr;
             }
+            printf("got reply header");
 
             header.length = ntohl(header.length);
             header.id = ntohl(header.id);
@@ -365,7 +443,8 @@ namespace andromeda
 
         void SendPacket(RequestHeader* header, void* data) {
             SendPacket(header);
-            ssize_t payload_size = header->length - sizeof(RequestHeader);
+            ssize_t payload_size = bswap_32(header->length) - sizeof(RequestHeader);
+            printf("sending body. size: %u\n", payload_size);
             ssize_t count = send(sock_, data, payload_size, 0);
         }
 
@@ -389,9 +468,9 @@ namespace andromeda
         }
 
         RequestHeader CreatePacket(u8 signal_major, u8 signal_minor, u32 length) {
-            printf("CreatePacket major: %u minor: %u length: %u", signal_major, signal_minor, length);
+            printf("CreatePacket major: %u minor: %u length: %u\n", signal_major, signal_minor, length);
             RequestHeader packet = RequestHeader{};
-            packet.length = htonl(length + sizeof(RequestHeader));
+            packet.length = bswap_32(length + sizeof(RequestHeader));
             packet.id = htonl(packet_id);
             packet.flags = 0x00;
             packet.cmdSet = signal_major;
