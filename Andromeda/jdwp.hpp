@@ -11,6 +11,16 @@
 #include <cstdlib>
 #include <iostream>
 
+
+/**
+ * Read more:
+ *  - https://docs.oracle.com/javase/8/docs/technotes/guides/jpda/jdwp-spec.html
+ *  - https://docs.oracle.com/javase/8/docs/platform/jpda/jdwp/jdwp-protocol.html
+ *  - https://github.com/node-modules/jdwp
+ *  - https://code.wireshark.org/review/gitweb?p=wireshark.git;a=commit;h=3a42f536ed7dff6bf04cbb2b6fbf9c69f4267f59
+ *  - https://github.com/IOActive/jdwp-shellifier/blob/master/jdwp-shellifier.py
+ */
+
 // https://gist.github.com/atr000/249599
 // a) As Mac OS X does not have byteswap.h
 // needed this for a c util I had used over the years on linux. 
