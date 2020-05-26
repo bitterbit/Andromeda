@@ -93,6 +93,12 @@ u64 bswap<u64>(u64 value) {
 // CMDSET_REFERENCETYPE
 #define CMD_METHODS 5
 
+// CMDSET_THREADREFERENCE
+#define CMD_THREAD_RESUME 3
+
+// CMDSET_EVENTREQUEST
+#define CMD_EVENT_SET 1
+
 #define PACKED __attribute__((__packed__))
 
 namespace andromeda
@@ -313,9 +319,18 @@ namespace andromeda
             if (!is_connected_ || suspended_thread_id_ == 0) {
                 return;
             }
+            auto thread_id = suspended_thread_id_;
             printf("next instruction thread_id: %u\n", suspended_thread_id_);
-            SendSingleStepEvent<u64>(suspended_thread_id_);
-            ResumeVM();
+            SendSingleStepEvent<u64>(thread_id);
+            u32 c = GetSuspendCount<u64>(thread_id);
+            for(u32 i=0; i<c; i++) {
+                SendResumeThread<u64>(thread_id);
+            }
+
+            /* ResumeVM(); */
+            /* SendResumeThread<u64>(thread_id); */
+            /* SendResumeThread<u64>(thread_id); */
+            /* SendResumeThread<u64>(thread_id); */
             WaitForBreakpoint();
         }
 
@@ -381,6 +396,7 @@ namespace andromeda
 
                         loc.classID = bswap<u64>(loc.classID);      // 00 00 00 00 00 00 01
                         loc.methodID = bswap<u32>(loc.methodID);
+                        loc.location = bswap_64(loc.location);
 
                         printf("bkpt bp_id: %u thread_id: %u\n", bp_id, thread_id);
                         printf("bkpt typeTag: %u classID: %u methodID: %u location: %u\n",loc.typeTag, loc.classID, loc.methodID, loc.location);
@@ -398,8 +414,9 @@ namespace andromeda
 
                         loc.classID = bswap<u64>(loc.classID);      
                         loc.methodID = bswap<u32>(loc.methodID);
+                        loc.location = bswap_64(loc.location);
                         printf("step! thread_id: %u\n", thread_id);
-                        printf("step! typeTag: %u classID: %u methodID: %u location: %u\n",loc.typeTag, loc.classID, loc.methodID, loc.location);
+                        std::cout << "step! classID " << loc.classID << " methodID " << loc.methodID << " line " << loc.location << std::endl;
                         suspended_thread_id_ = thread_id;
                     } else {
                         printf("errrrrr!!\n");
@@ -584,7 +601,7 @@ namespace andromeda
             bp_request.loc.methodID = bswap<MethodType>(methodID);
             bp_request.loc.location = 0;
 
-            auto header = CreatePacket(15, 1, sizeof(bp_request)); // EVENT_REQUEST, CMD_SET
+            auto header = CreatePacket(CMDSET_EVENTREQUEST, CMD_EVENT_SET, sizeof(bp_request)); // EVENT_REQUEST, CMD_SET
             SendPacket(&header, (void*)&bp_request);
 
             ssize_t size = 0;
@@ -609,9 +626,9 @@ namespace andromeda
             step_request.modKind = 10;              // MOD_KIND_STEP                     
             step_request.threadID = bswap<ObjectType>(threadID);
             step_request.size = bswap_32(0);        // MIN (instruction and not source line)
-            step_request.depth = bswap_32(2);       // STEP OVER
+            step_request.depth = bswap_32(1);       // STEP OVER
 
-            auto header = CreatePacket(15, 1, sizeof(step_request));
+            auto header = CreatePacket(CMDSET_EVENTREQUEST, CMD_EVENT_SET, sizeof(step_request));
             SendPacket(&header, (void*)&step_request);
 
             ssize_t size = 0;
@@ -622,6 +639,37 @@ namespace andromeda
                 std::cout << "got request id: " << id << std::endl;
                 free(body);
             }
+        }
+
+        template <typename ObjectType>
+        void SendResumeThread(ObjectType threadID) {
+            printf("send resume thread\n");
+            auto header = CreatePacket(CMDSET_THREADREFERENCE, CMD_THREAD_RESUME, sizeof(ObjectType));
+            ObjectType t = bswap<ObjectType>(threadID);
+            SendPacket(&header, (void*)&t);
+            WaitForReply();
+            printf("resume thread acked\n");
+            suspended_thread_id_ = 0;
+        }
+
+        template <typename ObjectType>
+        u32 GetSuspendCount(ObjectType threadID) {
+            printf("get suspend count %u\n", threadID);
+            auto header = CreatePacket(CMDSET_THREADREFERENCE, CMD_THREAD_RESUME, sizeof(ObjectType));
+            ObjectType t = bswap<ObjectType>(threadID);
+            SendPacket(&header, (void*)&t);
+
+            ssize_t size = 0;
+            void* body = ReadReply(&size);
+            if (size > 0 && body != nullptr) {
+                assert(size == sizeof(u32));
+                u32 suspend_count = bswap_32(*(u32*)body);
+                std::cout << "got suspend count " << suspend_count << " for threadid " << threadID << std::endl;
+                free(body);
+                return suspend_count;
+            }
+
+            return 0;
         }
 
         void WaitForReply() {
