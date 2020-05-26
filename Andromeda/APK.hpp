@@ -289,10 +289,15 @@ namespace andromeda
 
 		void disasm_method(const std::string& method_path)
 		{
+                    disasm_method(method_path, 0);
+		}
+
+		void disasm_method(const std::string& method_path, unsigned int hi_line) 
+                {
 			auto found = false;
 			for (auto& parsed_dex : parsed_dexes)
 			{
-				const auto current_found = parsed_dex.dump_method(method_path);
+				const auto current_found = parsed_dex.dump_method(method_path, hi_line);
 				found = found ? found : current_found;
 			}
 
@@ -301,7 +306,7 @@ namespace andromeda
 				color::color_printf(color::FG_LIGHT_RED, "Failed to locale method: %s\n",
 				                    method_path.c_str());
 			}
-		}
+                }
 
 		void dump_permissions() const 
 		{

@@ -157,6 +157,11 @@ namespace andromeda
 		}
 
 		bool dump_method(const std::string& method_path) const
+                {
+                    dump_method(method_path, 0);
+                }
+
+		bool dump_method(const std::string& method_path, unsigned int hi_line) const
 		{
 			const auto [class_path, function_name] = split_method_path(method_path);
 
@@ -188,7 +193,7 @@ namespace andromeda
 				found = true;
 				const auto type = DexDissasembler::CfgType::None;
 				DexDissasembler disasm(dex_ir, type);
-				disasm.DumpMethod(ir_method.get());
+				disasm.DumpMethodHighlight(ir_method.get(), hi_line);
 			}
 
 			return found;

@@ -298,13 +298,15 @@ int main(const int argc, char* argv[])
                         andromeda::Breakpoint* bp = remote->WaitForBreakpoint(); // don't delete bp as it is owned by jdwp::remote
                         if (bp != nullptr) {
                             printf("Breakpoint! %s %s\n", bp->class_name.c_str(), bp->method_name.c_str());
-                            apk.disasm_method(bp->class_name + "." + bp->method_name);
+                            apk.disasm_method(bp->class_name + "." + bp->method_name, 0); // TODO take line number
                         }
                 }
                 else if (line == "ni") {
                         andromeda::Breakpoint *bp = remote->StepInstruction();  
-                        apk.disasm_method(bp->class_name + "." + bp->method_name);
-                        delete bp;
+                        if (bp != nullptr) {
+                            apk.disasm_method(bp->class_name + "." + bp->method_name, bp->lineno);
+                            delete bp;
+                        }
                 }
 		else if (line == "activities")
 		{

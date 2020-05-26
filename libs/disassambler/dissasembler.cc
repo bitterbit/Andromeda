@@ -92,6 +92,14 @@ bool PrintCodeIrVisitor::Visit(lir::Bytecode *bytecode)
     return true;
 }
 
+bool DebuggerPrintCodeIrVisitior::Visit(lir::Bytecode *bytecode)
+{
+    if (bytecode->offset == highlight_index_) {
+        printf("->", bytecode->offset);
+    }
+    return PrintCodeIrVisitor::Visit(bytecode);
+}
+
 bool PrintCodeIrVisitor::Visit(lir::PackedSwitchPayload *packed_switch)
 {
     StartInstruction(packed_switch);
@@ -414,10 +422,20 @@ void DexDissasembler::DumpAllMethods() const
 void DexDissasembler::DumpMethod(ir::EncodedMethod *ir_method) const
 {
     printf("\nmethod %s.%s%s\n{\n",
-           ir_method->decl->parent->Decl().c_str(),
-           ir_method->decl->name->c_str(),
-           MethodDeclaration(ir_method->decl->prototype).c_str());
+                       ir_method->decl->parent->Decl().c_str(),
+                                  ir_method->decl->name->c_str(),
+                                             MethodDeclaration(ir_method->decl->prototype).c_str());
     Dissasemble(ir_method);
+    printf("}\n");
+}
+
+void DexDissasembler::DumpMethodHighlight(ir::EncodedMethod *ir_method, unsigned int hi_line) const
+{
+    printf("\nmethod %s.%s%s\n{\n",
+                       ir_method->decl->parent->Decl().c_str(),
+                                  ir_method->decl->name->c_str(),
+                                             MethodDeclaration(ir_method->decl->prototype).c_str());
+    DissasembleHighlight(ir_method, hi_line);
     printf("}\n");
 }
 
@@ -427,15 +445,34 @@ void DexDissasembler::Dissasemble(ir::EncodedMethod *ir_method) const
     std::unique_ptr<lir::ControlFlowGraph> cfg;
     switch (cfg_type_)
     {
-    case CfgType::Compact:
-        cfg.reset(new lir::ControlFlowGraph(&code_ir, false));
-        break;
-    case CfgType::Verbose:
-        cfg.reset(new lir::ControlFlowGraph(&code_ir, true));
-        break;
-    default:
-        break;
-    }
+        case CfgType::Compact:
+            cfg.reset(new lir::ControlFlowGraph(&code_ir, false));
+            break;
+        case CfgType::Verbose:
+            cfg.reset(new lir::ControlFlowGraph(&code_ir, true));
+            break;
+        default:
+            break;
+        }
     PrintCodeIrVisitor visitor(dex_ir_, cfg.get());
+    code_ir.Accept(&visitor);
+}
+
+void DexDissasembler::DissasembleHighlight(ir::EncodedMethod *ir_method, unsigned int hi_line) const
+{
+    lir::CodeIr code_ir(ir_method, dex_ir_);
+    std::unique_ptr<lir::ControlFlowGraph> cfg;
+    switch (cfg_type_)
+    {
+        case CfgType::Compact:
+            cfg.reset(new lir::ControlFlowGraph(&code_ir, false));
+            break;
+        case CfgType::Verbose:
+            cfg.reset(new lir::ControlFlowGraph(&code_ir, true));
+            break;
+        default:
+            break;
+        }
+    DebuggerPrintCodeIrVisitior visitor(hi_line, dex_ir_, cfg.get());
     code_ir.Accept(&visitor);
 }

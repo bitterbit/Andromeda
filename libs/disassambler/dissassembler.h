@@ -30,8 +30,9 @@ public:
     PrintCodeIrVisitor(std::shared_ptr<ir::DexFile> dex_ir, lir::ControlFlowGraph *cfg)
         : dex_ir_(dex_ir), cfg_(cfg) {}
 
-private:
+protected:
     virtual bool Visit(lir::Bytecode *bytecode) override;
+private:
     virtual bool Visit(lir::PackedSwitchPayload *packed_switch) override;
     virtual bool Visit(lir::SparseSwitchPayload *sparse_switch) override;
     virtual bool Visit(lir::ArrayData *array_data) override;
@@ -62,6 +63,26 @@ private:
     size_t current_block_index_ = 0;
 };
 
+
+
+
+class DebuggerPrintCodeIrVisitior : public PrintCodeIrVisitor 
+{
+public:
+    DebuggerPrintCodeIrVisitior(unsigned int highlight_index, std::shared_ptr<ir::DexFile> dex_ir, lir::ControlFlowGraph *cfg)
+        : PrintCodeIrVisitor(dex_ir, cfg) {
+       highlight_index_ = highlight_index;
+    } 
+
+private:
+    unsigned int highlight_index_;
+    virtual bool Visit(lir::Bytecode *bytecode) override;
+};
+
+
+
+
+
 // A .dex bytecode dissasembler using lir::CodeIr
 class DexDissasembler
 {
@@ -86,9 +107,11 @@ public:
 
     void DumpAllMethods() const;
     void DumpMethod(ir::EncodedMethod *ir_method) const;
+    void DumpMethodHighlight(ir::EncodedMethod *ir_method, unsigned int hi_line) const;
 
 private:
     void Dissasemble(ir::EncodedMethod *ir_method) const;
+    void DissasembleHighlight(ir::EncodedMethod *ir_method, unsigned int hi_line) const;
 
 private:
     std::shared_ptr<ir::DexFile> dex_ir_;
