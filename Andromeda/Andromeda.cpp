@@ -253,6 +253,7 @@ int main(const int argc, char* argv[])
         auto remote = std::make_shared<andromeda::jdwp>();
         g_jdwp_remote = remote;
         register_interrupt_handler();
+        std::string last_line = "";
 
 	while (true)
 	{
@@ -272,6 +273,10 @@ int main(const int argc, char* argv[])
 		linenoise::AddHistory(line.c_str());
 
                 printf("DEBUG: line %s\n", line.c_str());
+
+                if (line == "" && last_line != "") {
+                    line = last_line;
+                }
 
                 if (ctrlc) 
                 {
@@ -474,6 +479,7 @@ int main(const int argc, char* argv[])
 			help_commands();
 		}
 
+                last_line = line;
 		// loop end
 	}
 
