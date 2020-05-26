@@ -232,6 +232,16 @@ namespace andromeda
             u64 lineno;
     };
 
+
+    template <typename RefType, typename ObjectType, typename MethodType>
+    struct JdwpLocationEvent 
+    {
+        u32 event_kind;
+        u32 request_id;
+        ObjectType thread_id;
+        JdwpLocation<RefType, MethodType> loc;
+    };
+
     class jdwp
     {
     public:
@@ -326,12 +336,12 @@ namespace andromeda
             for(u32 i=0; i<c; i++) {
                 SendResumeThread<u64>(thread_id);
             }
-
-            /* ResumeVM(); */
-            /* SendResumeThread<u64>(thread_id); */
-            /* SendResumeThread<u64>(thread_id); */
-            /* SendResumeThread<u64>(thread_id); */
-            WaitForBreakpoint();
+            auto events = _WaitForBreakpoint<u64,u64,u32>();
+            std::cout << "events " << events.size() << std::endl;
+            if (events.size() > 0){
+                auto e = events[0];
+                std::cout << "stepped. line: " << e.loc.location << std::endl;
+            }
         }
 
         void SuspendVM() {
@@ -355,13 +365,26 @@ namespace andromeda
         }
 
         Breakpoint* WaitForBreakpoint() {
+            auto events = _WaitForBreakpoint<u64,u64,u32>();
+            auto e = events[0]; 
+            
+            u32 bp_id = e.request_id;
+            if (e.event_kind == 2 && bp_id != 0 && breakpoints_.count(bp_id) > 0) {
+                return &breakpoints_[bp_id]; // we own breakpoints so this is ok, still not sure about this.
+            }
+            return nullptr;
+        }
+
+        template <typename RefType, typename ObjectType, typename MethodType>
+        std::vector<JdwpLocationEvent<RefType, ObjectType, MethodType>> _WaitForBreakpoint() {
+            std::vector<JdwpLocationEvent<RefType, ObjectType, MethodType>> events;
+
             // now wait for a breakpoint event
             printf("waiting for breakponint\n");
             ssize_t size = 0;
             void* body = ReadReply(&size);
             printf("got event breakponint\n");
 
-            u32 bp_id = 0;
 
             if (size > 0 && body != nullptr) {
                 char* buff = (char*)body;
@@ -382,8 +405,8 @@ namespace andromeda
 
                     printf("eventkind %u\n", event_kind);
 
-                    if (event_kind == 2) { // EVENT_KIND_BREAKPOINT
-                        bp_id = bswap_32(*((u32*)buff)); // 000000002
+                    if (event_kind == 1 || event_kind == 2) { // EVENT_KIND_SINGLE_STEP || EVENT_KIND_BREAKPOINT
+                        u32 request_id = bswap_32(*((u32*)buff));
                         buff += sizeof(u32);
 
                         // TODO IDSizes ObjectID
@@ -397,31 +420,18 @@ namespace andromeda
                         loc.classID = bswap<u64>(loc.classID);      // 00 00 00 00 00 00 01
                         loc.methodID = bswap<u32>(loc.methodID);
                         loc.location = bswap_64(loc.location);
-
-                        printf("bkpt bp_id: %u thread_id: %u\n", bp_id, thread_id);
-                        printf("bkpt typeTag: %u classID: %u methodID: %u location: %u\n",loc.typeTag, loc.classID, loc.methodID, loc.location);
-
                         suspended_thread_id_ = thread_id;
-                    } else if (event_kind == 1) { // EVENT_KIND_SINGLE_STEP
-                        u32 request_id = bswap_32(*((u32*)buff));
-                        buff += sizeof(u32);
-                        u64 thread_id = bswap<u64>(*((u64*)buff));
-                        buff += sizeof(u64);
 
-                        JdwpLocation<u64, u32> loc;
-                        memcpy((void*)&loc, buff, sizeof(loc));
-                        buff += sizeof(loc);
-
-                        loc.classID = bswap<u64>(loc.classID);      
-                        loc.methodID = bswap<u32>(loc.methodID);
-                        loc.location = bswap_64(loc.location);
-                        printf("step! thread_id: %u\n", thread_id);
-                        std::cout << "step! classID " << loc.classID << " methodID " << loc.methodID << " line " << loc.location << std::endl;
-                        suspended_thread_id_ = thread_id;
+                        JdwpLocationEvent<RefType, ObjectType, MethodType> event; 
+                        event.event_kind = event_kind;
+                        event.request_id = request_id;
+                        event.thread_id = thread_id;
+                        event.loc = loc;
+                        events.push_back(event);
                     } else {
                         printf("errrrrr!!\n");
                         free(body);
-                        return nullptr;
+                        return events;
                     }
 
                     assert(buff <= end);
@@ -432,11 +442,7 @@ namespace andromeda
                 free(body);
             }
 
-            if (bp_id != 0 && breakpoints_.count(bp_id) > 0) {
-                return &breakpoints_[bp_id]; // we own breakpoints so this is ok, still not sure about this.
-            }
-
-            return nullptr;
+            return events;
         }
 
     private:
