@@ -253,51 +253,29 @@ namespace andromeda
             FetchIDSizes();
             FetchVersion();
 
-            SetBreakpoint();
-
             return true;
         }
 
-        void SetBreakpoint() {
-            std::string name = "Lcom/example/myapplication/MyActivity;";
+        void SetBreakpoint(std::string cls, std::string method) {
             if (!is_connected_) {
                 return;
             }
 
-            if (name.rfind("L") != 0 || name.back() != ';')  {
-                printf("bad class name %s\n", name.c_str());
+            if (cls.rfind("L") != 0 || cls.back() != ';')  {
+                std::cout << "bad class name " << cls << std::endl;
                 return;
             }
 
             // TODO: handle different sizes according to IdSizes
-            auto classes = GetClassByName<u64>(name);
-            auto methods = GetMethodsForType<u64, u32>(classes[0].typeID);
-
-            for(auto const &value: methods) {
-                std::cout << "method: " << value.name << " id: " << value.methodID << std::endl;
-            }
-
-            auto bp_request = BreakpointRequestEvent<u64, u32>();
-            bp_request.eventType = 2;                   // BREAKPOINT
-            bp_request.suspendPolicy = 2;               // SUSPEND_ALL 
-            bp_request.modifiers = bswap_32(1);
-            bp_request.modKind = 7;                     // MOD_KIND_LOCATIONONLY
-            bp_request.loc.typeTag = 1;                     // CLASS
-            bp_request.loc.classID = bswap<u64>(classes[0].typeID);
-            bp_request.loc.methodID = bswap<u32>(methods[3].methodID);
-            bp_request.loc.location = 0;
-
-            /* printf("size of bp_request %u\n", sizeof(bp_request)); */
-            auto header = CreatePacket(15, 1, sizeof(bp_request)); // EVENT_REQUEST, CMD_SET
-            SendPacket(&header, (void*)&bp_request);
-
-            ssize_t size = 0;
-            void* body = ReadReply(&size);
-            if (size > 0 && body != nullptr) {
-                assert(size == sizeof(u32));
-                u32 id = bswap_32(*(u32*)body);
-                std::cout << "got request id: " << id << std::endl;
-                free(body);
+            auto classes = GetClassByName<u64>(cls);
+            for(auto const &clsRef: classes) {
+                auto methods = GetMethodsForType<u64, u32>(clsRef.typeID);
+                for(auto const &methodRef: methods) {
+                    if (methodRef.name == method) {
+                        std::cout << "setting breakpoint to method: " << methodRef.name << " id: " << methodRef.methodID << std::endl;
+                        SendBreakpointEvent<u64, u32>(clsRef.typeID, methodRef.methodID);
+                    }
+                }
             }
         }
 
@@ -521,6 +499,34 @@ namespace andromeda
             }
 
             return methods;
+        }
+
+        template <typename RefType, typename MethodType>
+        u32 SendBreakpointEvent(RefType classID, MethodType methodID){
+            auto bp_request = BreakpointRequestEvent<RefType, MethodType>();
+            bp_request.eventType = 2;                   // BREAKPOINT
+            bp_request.suspendPolicy = 2;               // SUSPEND_ALL 
+            bp_request.modifiers = bswap_32(1);         // number of modifiers
+            bp_request.modKind = 7;                     // MOD_KIND_LOCATIONONLY
+            bp_request.loc.typeTag = 1;                 // CLASS
+            bp_request.loc.classID = bswap<RefType>(classID);
+            bp_request.loc.methodID = bswap<MethodType>(methodID);
+            bp_request.loc.location = 0;
+
+            auto header = CreatePacket(15, 1, sizeof(bp_request)); // EVENT_REQUEST, CMD_SET
+            SendPacket(&header, (void*)&bp_request);
+
+            ssize_t size = 0;
+            void* body = ReadReply(&size);
+            if (size > 0 && body != nullptr) {
+                assert(size == sizeof(u32));
+                u32 id = bswap_32(*(u32*)body);
+                std::cout << "got request id: " << id << std::endl;
+                free(body);
+                return id;
+            }
+
+            return 0;
         }
 
 

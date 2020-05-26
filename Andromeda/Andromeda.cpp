@@ -286,6 +286,12 @@ int main(const int argc, char* argv[])
 			auto [_, addr] = utils::split(line, ' ');
                         remote->Attach(addr);
                 }
+                else if (utils::starts_with(line, "b ")) {
+			auto [_, cmd] = utils::split(line, ' ');
+			auto [cls, method] = utils::split(cmd, ' ');
+                        printf("set breakpoint cls: %s method %s\n", cls.c_str(), method.c_str());
+                        remote->SetBreakpoint(cls, method);
+                }
                 else if (line == "cont") 
                 {
                         remote->ResumeVM();
