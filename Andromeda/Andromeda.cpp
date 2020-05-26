@@ -302,6 +302,9 @@ int main(const int argc, char* argv[])
                         }
                         // if we get here we have a breakpoint
                 }
+                else if (line == "ni") {
+                        remote->StepInstruction();  
+                }
 		else if (line == "activities")
 		{
 			apk.dump_activities();

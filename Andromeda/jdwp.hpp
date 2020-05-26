@@ -162,12 +162,24 @@ namespace andromeda
     template <typename RefType, typename MethodType>
     struct PACKED BreakpointRequestEvent {
         /* header */
-        u8  eventType;
+        u8  eventKind;
         u8  suspendPolicy;
         u32 modifiers; // can be only 1, if more we need a different structure
         u8  modKind;
 
         JdwpLocation<RefType, MethodType> loc;
+    };
+
+    template <typename ObjectType>
+    struct PACKED StepRequestEvent {
+        u8  eventKind;
+        u8  suspendPolicy;
+        u32 modifiers; // can be only 1, if more we need a different structure
+        u8  modKind;
+
+        ObjectType threadID;
+        u32 size;
+        u32 depth;
     };
 
     JdwpVersion ParseJdwpVersion(char* buff, ssize_t size) {
@@ -297,6 +309,16 @@ namespace andromeda
             }
         }
 
+        void StepInstruction() {
+            if (!is_connected_ || suspended_thread_id_ == 0) {
+                return;
+            }
+            printf("next instruction thread_id: %u\n", suspended_thread_id_);
+            SendSingleStepEvent<u64>(suspended_thread_id_);
+            ResumeVM();
+            WaitForBreakpoint();
+        }
+
         void SuspendVM() {
             if(!is_connected_) {
                 return;
@@ -314,6 +336,7 @@ namespace andromeda
             SendPacket(&packet);
             WaitForReply();
             printf("resumeVM acked\n");
+            suspended_thread_id_ = 0;
         }
 
         Breakpoint* WaitForBreakpoint() {
@@ -361,8 +384,25 @@ namespace andromeda
 
                         printf("bkpt bp_id: %u thread_id: %u\n", bp_id, thread_id);
                         printf("bkpt typeTag: %u classID: %u methodID: %u location: %u\n",loc.typeTag, loc.classID, loc.methodID, loc.location);
+
+                        suspended_thread_id_ = thread_id;
+                    } else if (event_kind == 1) { // EVENT_KIND_SINGLE_STEP
+                        u32 request_id = bswap_32(*((u32*)buff));
+                        buff += sizeof(u32);
+                        u64 thread_id = bswap<u64>(*((u64*)buff));
+                        buff += sizeof(u64);
+
+                        JdwpLocation<u64, u32> loc;
+                        memcpy((void*)&loc, buff, sizeof(loc));
+                        buff += sizeof(loc);
+
+                        loc.classID = bswap<u64>(loc.classID);      
+                        loc.methodID = bswap<u32>(loc.methodID);
+                        printf("step! thread_id: %u\n", thread_id);
+                        printf("step! typeTag: %u classID: %u methodID: %u location: %u\n",loc.typeTag, loc.classID, loc.methodID, loc.location);
+                        suspended_thread_id_ = thread_id;
                     } else {
-                        printf("errrrrr");
+                        printf("errrrrr!!\n");
                         free(body);
                         return nullptr;
                     }
@@ -388,6 +428,8 @@ namespace andromeda
         IdSizesResponse idSizes_;
         bool is_connected_ = false;
         int sock_ = 0;
+
+        u64 suspended_thread_id_;
 
         std::map<u32,Breakpoint> breakpoints_;
 
@@ -533,7 +575,7 @@ namespace andromeda
         template <typename RefType, typename MethodType>
         u32 SendBreakpointEvent(RefType classID, MethodType methodID){
             auto bp_request = BreakpointRequestEvent<RefType, MethodType>();
-            bp_request.eventType = 2;                   // BREAKPOINT
+            bp_request.eventKind = 2;                   // BREAKPOINT
             bp_request.suspendPolicy = 2;               // SUSPEND_ALL 
             bp_request.modifiers = bswap_32(1);         // number of modifiers
             bp_request.modKind = 7;                     // MOD_KIND_LOCATIONONLY
@@ -558,6 +600,29 @@ namespace andromeda
             return 0;
         }
 
+        template <typename ObjectType>
+        void SendSingleStepEvent(ObjectType threadID){
+            auto step_request = StepRequestEvent<ObjectType>();
+            step_request.eventKind = 1;             // SINGLE_STEP
+            step_request.suspendPolicy = 1;         // ONLY THREAD
+            step_request.modifiers = bswap_32(1);   // counter
+            step_request.modKind = 10;              // MOD_KIND_STEP                     
+            step_request.threadID = bswap<ObjectType>(threadID);
+            step_request.size = bswap_32(0);        // MIN (instruction and not source line)
+            step_request.depth = bswap_32(2);       // STEP OVER
+
+            auto header = CreatePacket(15, 1, sizeof(step_request));
+            SendPacket(&header, (void*)&step_request);
+
+            ssize_t size = 0;
+            void* body = ReadReply(&size);
+            if (size > 0 && body != nullptr) {
+                assert(size == sizeof(u32));
+                u32 id = bswap_32(*(u32*)body);
+                std::cout << "got request id: " << id << std::endl;
+                free(body);
+            }
+        }
 
         void WaitForReply() {
             ssize_t size = 0;
