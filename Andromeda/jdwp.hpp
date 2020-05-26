@@ -340,9 +340,9 @@ namespace andromeda
             }
         }
 
-        void StepInstruction() {
+        Breakpoint* StepInstruction() {
             if (!is_connected_ || suspended_thread_id_ == 0) {
-                return;
+                return nullptr;
             }
 
             printf("next instruction thread_id: %u\n", suspended_thread_id_);
@@ -351,7 +351,7 @@ namespace andromeda
             if (step_request_id_ == 0) {
                 u32 req_id = SendSingleStepEvent<u64>(thread_id);
                 if (req_id == 0) {
-                    return; // error
+                    return nullptr; // error
                 }
                 step_request_id_ = req_id;
             }
@@ -365,11 +365,20 @@ namespace andromeda
             std::cout << "events " << events.size() << std::endl;
             for(auto const &e: events) {
                if (e.request_id == step_request_id_) {
-                    auto class_name = GetClassName<u64>(e.loc.classID);
-                    std::cout << "stepped. line: " << e.loc.location << " class " << class_name << std::endl;
-
+                   std::string class_name = GetClassName<u64>(e.loc.classID);
+                   std::string method_name = GetMethodName<u64, u32>(e.loc.classID, e.loc.methodID);
+                   std::replace(class_name.begin(), class_name.end(), '/', '.');
+                   class_name.erase(0,1); // L
+                   class_name.erase(class_name.length()-1, 1); // ; 
+                   auto bp = new Breakpoint();
+                   bp->class_name = class_name;
+                   bp->method_name = method_name;
+                   bp->lineno = e.loc.location;
+                   return bp;
                } 
             }
+
+            return nullptr;
         }
 
         void SuspendVM() {
@@ -650,6 +659,17 @@ namespace andromeda
                 return name;
             }
 
+            return "";
+        }
+
+        template <typename RefType, typename MethodType>
+        std::string GetMethodName(RefType ref_type_id, MethodType method_id) {
+            auto methods = GetMethodsForType<RefType, MethodType>(ref_type_id);
+            for(auto const &methodRef: methods) {
+                if (methodRef.methodID == method_id) {
+                    return methodRef.name;
+                }
+            }
             return "";
         }
 

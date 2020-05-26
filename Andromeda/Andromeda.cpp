@@ -295,15 +295,16 @@ int main(const int argc, char* argv[])
                 else if (line == "cont") 
                 {
                         remote->Resume();
-                        andromeda::Breakpoint* bp = remote->WaitForBreakpoint();
+                        andromeda::Breakpoint* bp = remote->WaitForBreakpoint(); // don't delete bp as it is owned by jdwp::remote
                         if (bp != nullptr) {
                             printf("Breakpoint! %s %s\n", bp->class_name.c_str(), bp->method_name.c_str());
                             apk.disasm_method(bp->class_name + "." + bp->method_name);
                         }
-                        // if we get here we have a breakpoint
                 }
                 else if (line == "ni") {
-                        remote->StepInstruction();  
+                        andromeda::Breakpoint *bp = remote->StepInstruction();  
+                        apk.disasm_method(bp->class_name + "." + bp->method_name);
+                        delete bp;
                 }
 		else if (line == "activities")
 		{
