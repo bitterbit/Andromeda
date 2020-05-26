@@ -206,6 +206,14 @@ namespace andromeda
         return version;
     }
 
+    class Breakpoint 
+    {
+        public:
+            std::string class_name;
+            std::string method_name;
+            u64 lineno;
+    };
+
     class jdwp
     {
     public:
@@ -256,10 +264,14 @@ namespace andromeda
             return true;
         }
 
-        void SetBreakpoint(std::string cls, std::string method) {
+        void SetBreakpoint(std::string class_name, std::string method) {
             if (!is_connected_) {
                 return;
             }
+
+            auto cls = class_name;
+            std::replace(cls.begin(), cls.end(), '.', '/');
+            cls = "L" + cls + ";";
 
             if (cls.rfind("L") != 0 || cls.back() != ';')  {
                 std::cout << "bad class name " << cls << std::endl;
@@ -273,7 +285,13 @@ namespace andromeda
                 for(auto const &methodRef: methods) {
                     if (methodRef.name == method) {
                         std::cout << "setting breakpoint to method: " << methodRef.name << " id: " << methodRef.methodID << std::endl;
-                        SendBreakpointEvent<u64, u32>(clsRef.typeID, methodRef.methodID);
+                        u32 rid = SendBreakpointEvent<u64, u32>(clsRef.typeID, methodRef.methodID);
+                        if (rid != 0) {
+                            Breakpoint bp;
+                            bp.class_name = class_name;
+                            bp.method_name = methodRef.name;
+                            breakpoints_[rid] = bp;
+                        }
                     }
                 }
             }
@@ -298,12 +316,14 @@ namespace andromeda
             printf("resumeVM acked\n");
         }
 
-        void WaitForBreakpoint() {
+        Breakpoint* WaitForBreakpoint() {
             // now wait for a breakpoint event
             printf("waiting for breakponint\n");
             ssize_t size = 0;
             void* body = ReadReply(&size);
             printf("got event breakponint\n");
+
+            u32 bp_id = 0;
 
             if (size > 0 && body != nullptr) {
                 char* buff = (char*)body;
@@ -317,6 +337,7 @@ namespace andromeda
 
                 printf("suspend_policy: %u nb_events %u\n", suspend_policy, nb_events);
 
+
                 for(u32 i=0; i<nb_events; i++) {
                     u8 event_kind = *((u8*)buff);           // 02
                     buff += sizeof(u8);
@@ -324,7 +345,7 @@ namespace andromeda
                     printf("eventkind %u\n", event_kind);
 
                     if (event_kind == 2) { // EVENT_KIND_BREAKPOINT
-                        u32 bp_id = bswap_32(*((u32*)buff)); // 000000002
+                        bp_id = bswap_32(*((u32*)buff)); // 000000002
                         buff += sizeof(u32);
 
                         // TODO IDSizes ObjectID
@@ -343,7 +364,7 @@ namespace andromeda
                     } else {
                         printf("errrrrr");
                         free(body);
-                        return;
+                        return nullptr;
                     }
 
                     assert(buff <= end);
@@ -353,6 +374,12 @@ namespace andromeda
                 assert(buff <= end);
                 free(body);
             }
+
+            if (bp_id != 0 && breakpoints_.count(bp_id) > 0) {
+                return &breakpoints_[bp_id]; // we own breakpoints so this is ok, still not sure about this.
+            }
+
+            return nullptr;
         }
 
     private:
@@ -361,6 +388,8 @@ namespace andromeda
         IdSizesResponse idSizes_;
         bool is_connected_ = false;
         int sock_ = 0;
+
+        std::map<u32,Breakpoint> breakpoints_;
 
         bool Handshake() {
             std::string magic = JDWP_HANDSHAKE;
