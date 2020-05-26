@@ -91,6 +91,9 @@ u64 bswap<u64>(u64 value) {
 #define CMD_EXIT 10 
 
 // CMDSET_REFERENCETYPE
+#define CMD_SIGNATURE 1
+
+// CMDSET_REFERENCETYPE
 #define CMD_METHODS 5
 
 // CMDSET_THREADREFERENCE
@@ -362,7 +365,9 @@ namespace andromeda
             std::cout << "events " << events.size() << std::endl;
             for(auto const &e: events) {
                if (e.request_id == step_request_id_) {
-                    std::cout << "stepped. line: " << e.loc.location << std::endl;
+                    auto class_name = GetClassName<u64>(e.loc.classID);
+                    std::cout << "stepped. line: " << e.loc.location << " class " << class_name << std::endl;
+
                } 
             }
         }
@@ -625,10 +630,33 @@ namespace andromeda
             return methods;
         }
 
+        template <typename RefType>
+        std::string GetClassName(RefType ref_type_id) {
+            printf("GetClassName ref: %lu sizeof(%u)\n", ref_type_id, sizeof(RefType));
+
+            RefType refTypeId = bswap<RefType>(ref_type_id);
+            auto header = CreatePacket(CMDSET_REFERENCETYPE, CMD_SIGNATURE, sizeof(RefType));
+            SendPacket(&header, (void*)&refTypeId);
+            printf("sent packet\n");
+
+            ssize_t size = 0;
+            void* body = ReadReply(&size);
+            if (size > 0 && body != nullptr) {
+                char* buff = (char*)body;
+                u32 length = bswap_32(*(u32*)buff);
+                buff += sizeof(u32);
+                auto name = std::string(buff, length);
+                free(body);
+                return name;
+            }
+
+            return "";
+        }
+
         template <typename RefType, typename MethodType>
         u32 SendBreakpointEvent(RefType classID, MethodType methodID){
             auto bp_request = BreakpointRequestEvent<RefType, MethodType>();
-            bp_request.eventKind = 2;                   // BREAKPOINT
+            bp_request.eventKind = EVENT_KIND_BREAKPOINT;
             bp_request.suspendPolicy = 2;               // SUSPEND_ALL 
             bp_request.modifiers = bswap_32(1);         // number of modifiers
             bp_request.modKind = 7;                     // MOD_KIND_LOCATIONONLY
