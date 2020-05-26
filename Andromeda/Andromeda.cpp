@@ -294,7 +294,7 @@ int main(const int argc, char* argv[])
                 }
                 else if (line == "cont") 
                 {
-                        remote->ResumeVM();
+                        remote->Resume();
                         andromeda::Breakpoint* bp = remote->WaitForBreakpoint();
                         if (bp != nullptr) {
                             printf("Breakpoint! %s %s\n", bp->class_name.c_str(), bp->method_name.c_str());

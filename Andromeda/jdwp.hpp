@@ -98,6 +98,13 @@ u64 bswap<u64>(u64 value) {
 
 // CMDSET_EVENTREQUEST
 #define CMD_EVENT_SET 1
+#define CMD_EVENT_CLEAR 2 
+#define CMD_EVENT_CLEAR_ALL_BREAKPOINTS 3 
+
+
+// EventKind Constants
+#define EVENT_KIND_SINGLESTEP 1
+#define EVENT_KIND_BREAKPOINT 2
 
 #define PACKED __attribute__((__packed__))
 
@@ -186,6 +193,11 @@ namespace andromeda
         ObjectType threadID;
         u32 size;
         u32 depth;
+    };
+
+    struct PACKED ClearEventRequest {
+        u8 eventKind;
+        u32 requestID;
     };
 
     JdwpVersion ParseJdwpVersion(char* buff, ssize_t size) {
@@ -329,18 +341,29 @@ namespace andromeda
             if (!is_connected_ || suspended_thread_id_ == 0) {
                 return;
             }
-            auto thread_id = suspended_thread_id_;
+
             printf("next instruction thread_id: %u\n", suspended_thread_id_);
-            SendSingleStepEvent<u64>(thread_id);
+            auto thread_id = suspended_thread_id_;
+
+            if (step_request_id_ == 0) {
+                u32 req_id = SendSingleStepEvent<u64>(thread_id);
+                if (req_id == 0) {
+                    return; // error
+                }
+                step_request_id_ = req_id;
+            }
+
             u32 c = GetSuspendCount<u64>(thread_id);
             for(u32 i=0; i<c; i++) {
                 SendResumeThread<u64>(thread_id);
             }
+
             auto events = _WaitForBreakpoint<u64,u64,u32>();
             std::cout << "events " << events.size() << std::endl;
-            if (events.size() > 0){
-                auto e = events[0];
-                std::cout << "stepped. line: " << e.loc.location << std::endl;
+            for(auto const &e: events) {
+               if (e.request_id == step_request_id_) {
+                    std::cout << "stepped. line: " << e.loc.location << std::endl;
+               } 
             }
         }
 
@@ -353,25 +376,30 @@ namespace andromeda
             WaitForReply();
         }
 
-        void ResumeVM() {
+        void Resume() {
             if(!is_connected_) {
                 return;
             }
-            auto packet = CreatePacket(CMDSET_VM, CMD_RESUME); 
-            SendPacket(&packet);
-            WaitForReply();
+            SendResumeVM();
             printf("resumeVM acked\n");
             suspended_thread_id_ = 0;
+            if (step_request_id_ != 0) {
+                SendClearEvent(EVENT_KIND_SINGLESTEP, step_request_id_);
+                step_request_id_ = 0;
+            }
         }
 
         Breakpoint* WaitForBreakpoint() {
             auto events = _WaitForBreakpoint<u64,u64,u32>();
-            auto e = events[0]; 
-            
-            u32 bp_id = e.request_id;
-            if (e.event_kind == 2 && bp_id != 0 && breakpoints_.count(bp_id) > 0) {
-                return &breakpoints_[bp_id]; // we own breakpoints so this is ok, still not sure about this.
+            for(auto const &e: events) {
+                if (e.event_kind == EVENT_KIND_BREAKPOINT) {
+                    u32 bp_id = e.request_id;
+                    if (breakpoints_.count(bp_id) > 0) {
+                        return &breakpoints_[bp_id]; // we own breakpoints so this is ok, still not sure about this.
+                    }
+                }
             }
+
             return nullptr;
         }
 
@@ -405,9 +433,10 @@ namespace andromeda
 
                     printf("eventkind %u\n", event_kind);
 
-                    if (event_kind == 1 || event_kind == 2) { // EVENT_KIND_SINGLE_STEP || EVENT_KIND_BREAKPOINT
+                    if (event_kind == EVENT_KIND_SINGLESTEP || event_kind == EVENT_KIND_BREAKPOINT) {
                         u32 request_id = bswap_32(*((u32*)buff));
                         buff += sizeof(u32);
+                        printf("request_id %u\n", request_id);
 
                         // TODO IDSizes ObjectID
                         u64 thread_id = bswap<u64>(*((u64*)buff));  // 00 00 00  00 00 00 00 02
@@ -453,6 +482,7 @@ namespace andromeda
         int sock_ = 0;
 
         u64 suspended_thread_id_;
+        u32 step_request_id_;
 
         std::map<u32,Breakpoint> breakpoints_;
 
@@ -624,9 +654,9 @@ namespace andromeda
         }
 
         template <typename ObjectType>
-        void SendSingleStepEvent(ObjectType threadID){
+        u32 SendSingleStepEvent(ObjectType threadID){
             auto step_request = StepRequestEvent<ObjectType>();
-            step_request.eventKind = 1;             // SINGLE_STEP
+            step_request.eventKind = EVENT_KIND_SINGLESTEP;
             step_request.suspendPolicy = 1;         // ONLY THREAD
             step_request.modifiers = bswap_32(1);   // counter
             step_request.modKind = 10;              // MOD_KIND_STEP                     
@@ -644,7 +674,20 @@ namespace andromeda
                 u32 id = bswap_32(*(u32*)body);
                 std::cout << "got request id: " << id << std::endl;
                 free(body);
+                return id;
             }
+            return 0;
+        }
+
+        void SendClearEvent(u8 event_kind, u32 request_id) {
+            printf("SendClearEvent! %u %u\n", event_kind, request_id);
+            ClearEventRequest body = {}; 
+            body.eventKind = event_kind;
+            body.requestID = bswap_32(request_id);
+
+            auto header = CreatePacket(CMDSET_EVENTREQUEST, CMD_EVENT_CLEAR, sizeof(body));
+            SendPacket(&header, (void*)&body);
+            WaitForReply();
         }
 
         template <typename ObjectType>
@@ -676,6 +719,12 @@ namespace andromeda
             }
 
             return 0;
+        }
+
+        void SendResumeVM() {
+            auto packet = CreatePacket(CMDSET_VM, CMD_RESUME); 
+            SendPacket(&packet);
+            WaitForReply();
         }
 
         void WaitForReply() {
