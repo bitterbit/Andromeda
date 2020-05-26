@@ -152,6 +152,14 @@ namespace andromeda
     };
 
     template <typename RefType, typename MethodType>
+    struct PACKED JdwpLocation {
+        u8 typeTag; 
+        RefType classID;
+        MethodType methodID;
+        u64 location;
+    };
+
+    template <typename RefType, typename MethodType>
     struct PACKED BreakpointRequestEvent {
         /* header */
         u8  eventType;
@@ -159,11 +167,7 @@ namespace andromeda
         u32 modifiers; // can be only 1, if more we need a different structure
         u8  modKind;
 
-        /* location struct */
-        u8 typeTag; 
-        RefType classID;
-        MethodType methodID;
-        u64 location;
+        JdwpLocation<RefType, MethodType> loc;
     };
 
     JdwpVersion ParseJdwpVersion(char* buff, ssize_t size) {
@@ -270,7 +274,7 @@ namespace andromeda
             auto methods = GetMethodsForType<u64, u32>(classes[0].typeID);
 
             for(auto const &value: methods) {
-                std::cout << "method: " << value.name << std::endl;
+                std::cout << "method: " << value.name << " id: " << value.methodID << std::endl;
             }
 
             auto bp_request = BreakpointRequestEvent<u64, u32>();
@@ -278,12 +282,12 @@ namespace andromeda
             bp_request.suspendPolicy = 2;               // SUSPEND_ALL 
             bp_request.modifiers = bswap_32(1);
             bp_request.modKind = 7;                     // MOD_KIND_LOCATIONONLY
-            bp_request.typeTag = 1;                     // CLASS
-            bp_request.classID = bswap<u64>(classes[0].typeID);
-            bp_request.methodID = bswap<u32>(methods[3].methodID);
-            bp_request.location = 0;
+            bp_request.loc.typeTag = 1;                     // CLASS
+            bp_request.loc.classID = bswap<u64>(classes[0].typeID);
+            bp_request.loc.methodID = bswap<u32>(methods[3].methodID);
+            bp_request.loc.location = 0;
 
-            printf("size of bp_request %u\n", sizeof(bp_request));
+            /* printf("size of bp_request %u\n", sizeof(bp_request)); */
             auto header = CreatePacket(15, 1, sizeof(bp_request)); // EVENT_REQUEST, CMD_SET
             SendPacket(&header, (void*)&bp_request);
 
@@ -313,11 +317,64 @@ namespace andromeda
             auto packet = CreatePacket(CMDSET_VM, CMD_RESUME); 
             SendPacket(&packet);
             WaitForReply();
+            printf("resumeVM acked\n");
         }
 
         void WaitForBreakpoint() {
             // now wait for a breakpoint event
-            WaitForReply();
+            printf("waiting for breakponint\n");
+            ssize_t size = 0;
+            void* body = ReadReply(&size);
+            printf("got event breakponint\n");
+
+            if (size > 0 && body != nullptr) {
+                char* buff = (char*)body;
+                char* end = buff + size; 
+
+                u8 suspend_policy = *((u8*)buff);           // 02
+                buff += sizeof(u8);
+
+                u32 nb_events = bswap_32(*((u32*)buff));    // 00000001
+                buff += sizeof(u32);
+
+                printf("suspend_policy: %u nb_events %u\n", suspend_policy, nb_events);
+
+                for(u32 i=0; i<nb_events; i++) {
+                    u8 event_kind = *((u8*)buff);           // 02
+                    buff += sizeof(u8);
+
+                    printf("eventkind %u\n", event_kind);
+
+                    if (event_kind == 2) { // EVENT_KIND_BREAKPOINT
+                        u32 bp_id = bswap_32(*((u32*)buff)); // 000000002
+                        buff += sizeof(u32);
+
+                        // TODO IDSizes ObjectID
+                        u64 thread_id = bswap<u64>(*((u64*)buff));  // 00 00 00  00 00 00 00 02
+                        buff += sizeof(u64);
+
+                        JdwpLocation<u64, u32> loc;
+                        memcpy((void*)&loc, buff, sizeof(loc));
+                        buff += sizeof(loc);
+
+                        loc.classID = bswap<u64>(loc.classID);      // 00 00 00 00 00 00 01
+                        loc.methodID = bswap<u32>(loc.methodID);
+
+                        printf("bkpt bp_id: %u thread_id: %u\n", bp_id, thread_id);
+                        printf("bkpt typeTag: %u classID: %u methodID: %u location: %u\n",loc.typeTag, loc.classID, loc.methodID, loc.location);
+                    } else {
+                        printf("errrrrr");
+                        free(body);
+                        return;
+                    }
+
+                    assert(buff <= end);
+                }
+
+                printf("%p %p, diff %d\n", buff, end, end-buff);
+                assert(buff <= end);
+                free(body);
+            }
         }
 
     private:
@@ -357,7 +414,7 @@ namespace andromeda
                 idSizes_.objectIDSize = htonl(idSizes_.objectIDSize);
                 idSizes_.referenceTypeIDSize = htonl(idSizes_.referenceTypeIDSize);
                 idSizes_.frameIDSize = htonl(idSizes_.frameIDSize);
-                printf("got ID_SIZES %u %u %u %u %u\n", idSizes_.fieldIDSize, idSizes_.methodIDSize, idSizes_.objectIDSize, idSizes_.referenceTypeIDSize, idSizes_.frameIDSize);
+                printf("got ID_SIZES fieldID: %u, methodID: %u, objectID: %u, referenceID: %u, frameID: %u\n", idSizes_.fieldIDSize, idSizes_.methodIDSize, idSizes_.objectIDSize, idSizes_.referenceTypeIDSize, idSizes_.frameIDSize);
                 free(body);
             }
         }
@@ -370,7 +427,7 @@ namespace andromeda
             void* body = ReadReply(&size);
             if (body != nullptr && size > 0) {
                  version_ = ParseJdwpVersion((char*)body, size);
-                 printf("got version %u %u, %s %s %s\n", version_.jdwpMajor, version_.jdwpMinor, version_.vmName.c_str(), version_.description.c_str(), version_.vmVersion.c_str());
+                 /* printf("got version %u %u, %s %s %s\n", version_.jdwpMajor, version_.jdwpMinor, version_.vmName.c_str(), version_.description.c_str(), version_.vmVersion.c_str()); */
                  free(body);
             }
         }
@@ -381,18 +438,18 @@ namespace andromeda
 
             RequestHeader header = CreatePacket(CMDSET_VM, CMD_CLASSBYSIG); 
             SendPacketString(&header, name);
-            printf("sent classbysig packet\n");
+            /* printf("sent classbysig packet\n"); */
 
             ssize_t size = 0;
             void* body = ReadReply(&size);
             void* end = ((char*)body + size);
-            printf("got classbysig reply, size: %u\n", size);
+            /* printf("got classbysig reply, size: %u\n", size); */
 
             if (size > 0 && body != nullptr) {
                 char* buff = (char*)body;
                 s32 nb_classes = htonl(*(s32*)buff);
                 buff += sizeof(s32); 
-                printf("found %d classes\n", nb_classes);
+                /* printf("found %d classes\n", nb_classes); */
 
                 for (s32 i=0; i< nb_classes; i++) {
                     auto classRef = JdwpClassRef<T>();
@@ -421,12 +478,12 @@ namespace andromeda
 
             SendPacket(&header, (void*)&ref);
 
-            printf("sent packet\n");
+            /* printf("sent packet\n"); */
 
             ssize_t size = 0;
             void* body = ReadReply(&size);
             void* end = ((char*)body + size);
-            printf("got methods for class. reply, size: %u\n", size);
+            /* printf("got methods for class. reply, size: %u\n", size); */
 
             if (size > 0 && body != nullptr) {
                 char* buff = (char*)body;
@@ -485,15 +542,15 @@ namespace andromeda
                 printf("error: %d\n", errno);
                 return nullptr;
             }
-            printf("got reply header");
+            /* printf("got reply header\n"); */
 
-            header.length = ntohl(header.length);
-            header.id = ntohl(header.id);
-            header.errcode = ntohs(header.errcode);
-            printf("got reply (%u) id: %u, length: %u, errcode: %u, flags: %u\n", count, header.id, header.length, header.errcode, header.flags);
+            header.length = bswap_32(header.length);
+            header.id = bswap_32(header.id);
+            header.errcode = bswap_16(header.errcode);
+            /* printf("got reply (%u) id: %u, length: %u, errcode: %u, flags: %u\n", count, header.id, header.length, header.errcode, header.flags); */
 
 
-            if (header.flags != PACKET_TYPE_REPLY || header.errcode != 0) {
+            if (header.flags == PACKET_TYPE_REPLY && header.errcode != 0) {
                 printf("error code: %u, flag: %u\n", header.errcode, header.flags);
                 return nullptr;
             }
@@ -520,14 +577,14 @@ namespace andromeda
         void SendPacket(RequestHeader* header, void* data) {
             SendPacket(header);
             ssize_t payload_size = bswap_32(header->length) - sizeof(RequestHeader);
-            printf("sending body. size: %u\n", payload_size);
+            /* printf("sending body. size: %u\n", payload_size); */
             ssize_t count = send(sock_, data, payload_size, 0);
         }
 
         void SendPacketString(RequestHeader* header, std::string& body) {
             // header
             header->length = bswap_32(sizeof(RequestHeader) + sizeof(u32) + body.length());
-            printf("sending total length of %u\n", header->length);
+            /* printf("sending total length of %u\n", header->length); */
             SendPacket(header);
 
             // body
@@ -536,7 +593,7 @@ namespace andromeda
             u32 swaped_body_size = bswap_32(body_size);
             bytes += send(sock_, &swaped_body_size, sizeof(u32), 0);
             bytes += send(sock_, body.c_str(), body_size, 0);
-            printf("sent body of %u bytes\n", bytes);
+            /* printf("sent body of %u bytes\n", bytes); */
         }
 
         RequestHeader CreatePacket(u8 signal_major, u8 signal_minor) {
@@ -544,7 +601,7 @@ namespace andromeda
         }
 
         RequestHeader CreatePacket(u8 signal_major, u8 signal_minor, u32 length) {
-            printf("CreatePacket major: %u minor: %u length: %u\n", signal_major, signal_minor, length);
+            /* printf("CreatePacket major: %u minor: %u length: %u\n", signal_major, signal_minor, length); */
             RequestHeader packet = RequestHeader{};
             packet.length = bswap_32(length + sizeof(RequestHeader));
             packet.id = htonl(packet_id);
